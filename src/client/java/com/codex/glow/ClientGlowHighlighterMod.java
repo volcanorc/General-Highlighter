@@ -17,6 +17,7 @@ import net.minecraft.entity.Entity;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
 public final class ClientGlowHighlighterMod implements ClientModInitializer {
@@ -39,7 +40,7 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
         WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> BlockOutlineRenderer.render(context, blockScanner));
-        ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> blockScanner.onChunkLoaded(chunk.getPos()));
+        ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> blockScanner.onChunkLoaded(world, chunk.getPos()));
         ClientChunkEvents.CHUNK_UNLOAD.register((world, chunk) -> blockScanner.onChunkUnloaded(chunk.getPos()));
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> config.save());
     }
@@ -74,5 +75,11 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
 
         Identifier id = Registries.ENTITY_TYPE.getId(entity.getType());
         return config.getEntityColor(id, entity);
+    }
+
+    public static void onClientBlockUpdated(BlockPos pos) {
+        if (blockScanner != null && pos != null) {
+            blockScanner.onBlockUpdated(pos);
+        }
     }
 }

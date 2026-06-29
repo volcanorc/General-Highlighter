@@ -3,6 +3,7 @@
   "package": "com.codex.glow.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ClientWorldBlockUpdateMixin",
     "EntityColorMixin",
     "EntityGlowMixin"
   ],

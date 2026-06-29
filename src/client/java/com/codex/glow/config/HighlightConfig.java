@@ -29,6 +29,8 @@ public final class HighlightConfig {
     public Map<String, EntityRule> entities = new LinkedHashMap<>();
     public Map<String, BlockRule> blocks = new LinkedHashMap<>();
     public Map<String, ItemRule> items = new LinkedHashMap<>();
+    public boolean showNoisyBlocks = false;
+    public boolean useLoadedChunkRange = false;
 
     private transient Path path;
     private transient boolean dirty;

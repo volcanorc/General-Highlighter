@@ -46,6 +46,8 @@ public final class HighlighterScreen extends Screen {
     private ButtonWidget toggleButton;
     private ButtonWidget wallsButton;
     private ButtonWidget modeButton;
+    private ButtonWidget showNoisyBlocksButton;
+    private ButtonWidget loadedChunkRangeButton;
     private ButtonWidget allDroppedItemsButton;
     private boolean syncingEditor;
     private Identifier selectedId = Identifier.of("minecraft", "zombie");
@@ -179,6 +181,20 @@ public final class HighlighterScreen extends Screen {
             refreshEditor();
         }).dimensions(sideX, 240, 140, 20).build());
 
+        showNoisyBlocksButton = addDrawableChild(ButtonWidget.builder(Text.literal("Show noisy blocks"), button -> {
+            config.showNoisyBlocks = !config.showNoisyBlocks;
+            scroll = 0;
+            config.markDirty();
+            refreshEditor();
+        }).dimensions(sideX, 266, 140, 20).build());
+
+        loadedChunkRangeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Loaded range"), button -> {
+            config.useLoadedChunkRange = !config.useLoadedChunkRange;
+            scanner.requestRescan();
+            config.markDirty();
+            refreshEditor();
+        }).dimensions(sideX, 292, 140, 20).build());
+
         allDroppedItemsButton = addDrawableChild(ButtonWidget.builder(Text.literal("All dropped"), button -> {
             EntityRule rule = config.ensureEntityRule(ALL_DROPPED_ITEMS);
             rule.enabled = !rule.enabled;
@@ -187,7 +203,7 @@ public final class HighlighterScreen extends Screen {
             refreshEditor();
         }).dimensions(sideX, 240, 140, 20).build());
 
-        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 284, 140, 18, Text.literal("Max highlights"));
+        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 326, 140, 18, Text.literal("Max highlights"));
         maxHighlightsField.setMaxLength(5);
         maxHighlightsField.setChangedListener(value -> {
             if (syncingEditor || tab != Tab.BLOCKS) {
@@ -218,7 +234,8 @@ public final class HighlighterScreen extends Screen {
         context.drawTextWithShadow(textRenderer, "Range", width - 152, 134, 0xCFCFCF);
         context.drawTextWithShadow(textRenderer, "Presets", width - 152, 156, 0xCFCFCF);
         if (tab == Tab.BLOCKS) {
-            context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 274, 0xCFCFCF);
+            context.drawTextWithShadow(textRenderer, "Block options", width - 152, 258, 0xCFCFCF);
+            context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 316, 0xCFCFCF);
         } else if (tab == Tab.ITEMS) {
             context.drawTextWithShadow(textRenderer, "Dropped item stacks", width - 152, 232, 0xCFCFCF);
         }
@@ -303,7 +320,7 @@ public final class HighlighterScreen extends Screen {
         }
 
         return ids.stream()
-                .filter(id -> tab != Tab.BLOCKS || !query.isEmpty() || !NOISY_BLOCKS.contains(id.toString()))
+                .filter(id -> tab != Tab.BLOCKS || config.showNoisyBlocks || !query.isEmpty() || !NOISY_BLOCKS.contains(id.toString()))
                 .filter(id -> query.isEmpty() || id.toString().toLowerCase(Locale.ROOT).contains(query)
                         || HighlightConfig.displayName(id).toLowerCase(Locale.ROOT).contains(query))
                 .sorted(Comparator.comparing(Identifier::toString))
@@ -340,6 +357,8 @@ public final class HighlighterScreen extends Screen {
             rangeField.setText(Integer.toString(range));
             wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
             modeButton.visible = false;
+            showNoisyBlocksButton.visible = false;
+            loadedChunkRangeButton.visible = false;
             allDroppedItemsButton.visible = false;
             maxHighlightsField.visible = false;
         } else if (tab == Tab.BLOCKS) {
@@ -356,6 +375,10 @@ public final class HighlighterScreen extends Screen {
             wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
             modeButton.setMessage(Text.literal("Mode: " + mode));
             modeButton.visible = true;
+            showNoisyBlocksButton.setMessage(Text.literal(config.showNoisyBlocks ? "Noisy blocks: Shown" : "Noisy blocks: Hidden"));
+            showNoisyBlocksButton.visible = true;
+            loadedChunkRangeButton.setMessage(Text.literal(config.useLoadedChunkRange ? "Loaded chunks range: On" : "Loaded chunks range: Off"));
+            loadedChunkRangeButton.visible = true;
             allDroppedItemsButton.visible = false;
             maxHighlightsField.setText(Integer.toString(maxHighlights));
             maxHighlightsField.visible = true;
@@ -372,6 +395,8 @@ public final class HighlighterScreen extends Screen {
             rangeField.setText(Integer.toString(range));
             wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
             modeButton.visible = false;
+            showNoisyBlocksButton.visible = false;
+            loadedChunkRangeButton.visible = false;
             allDroppedItemsButton.setMessage(Text.literal(allDroppedEnabled ? "All dropped: On" : "All dropped: Off"));
             allDroppedItemsButton.visible = true;
             maxHighlightsField.visible = false;
