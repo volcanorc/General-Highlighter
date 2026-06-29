@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "general-highlighter",
+  "version": "${version}",
+  "name": "General Highlighter",
+  "description": "Client-side configurable glow and block highlighter for Fabric.",
+  "authors": [
+    "Codex"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.codex.glow.ClientGlowHighlighterMod"
+    ]
+  },
+  "mixins": [
+    "general-highlighter.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

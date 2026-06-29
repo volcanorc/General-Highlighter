@@ -1,0 +1,9 @@
+.gradle/
+.gradle-launcher/
+.tools/
+build/
+outputs/
+run/
+work/
+*.class
+*.log

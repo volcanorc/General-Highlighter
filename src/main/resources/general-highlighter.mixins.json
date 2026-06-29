@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.codex.glow.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "EntityColorMixin",
+    "EntityGlowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
