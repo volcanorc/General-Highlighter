@@ -4,6 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
+import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 
 import java.io.IOException;
@@ -18,6 +20,7 @@ import java.util.regex.Pattern;
 public final class HighlightConfig {
     public static final String DEFAULT_ENTITY_COLOR = "#FFFFFF";
     public static final String DEFAULT_BLOCK_COLOR = "#00FF55";
+    public static final String DEFAULT_ITEM_COLOR = "#FFFF00";
     public static final int DEFAULT_RANGE = 128;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -25,6 +28,7 @@ public final class HighlightConfig {
 
     public Map<String, EntityRule> entities = new LinkedHashMap<>();
     public Map<String, BlockRule> blocks = new LinkedHashMap<>();
+    public Map<String, ItemRule> items = new LinkedHashMap<>();
 
     private transient Path path;
     private transient boolean dirty;
@@ -62,14 +66,32 @@ public final class HighlightConfig {
             blocks = new LinkedHashMap<>();
             dirty = true;
         }
+        if (items == null) {
+            items = new LinkedHashMap<>();
+            dirty = true;
+        }
 
         entities.values().forEach(EntityRule::sanitize);
         blocks.values().forEach(BlockRule::sanitize);
+        items.values().forEach(ItemRule::sanitize);
     }
 
     private void ensureStarterRules() {
         ensureEntityRule("minecraft:zombie");
+        ensureAllDroppedItemsRule();
         ensureBlockRule("minecraft:chest");
+        ensureItemRule("minecraft:diamond");
+    }
+
+    private void ensureAllDroppedItemsRule() {
+        EntityRule rule = entities.get("minecraft:item");
+        if (rule == null) {
+            rule = new EntityRule();
+            rule.color = DEFAULT_ITEM_COLOR;
+            entities.put("minecraft:item", rule);
+            dirty = true;
+        }
+        rule.sanitize();
     }
 
     public EntityRule ensureEntityRule(Identifier id) {
@@ -102,7 +124,26 @@ public final class HighlightConfig {
         return rule;
     }
 
+    public ItemRule ensureItemRule(Identifier id) {
+        return ensureItemRule(id.toString());
+    }
+
+    public ItemRule ensureItemRule(String id) {
+        ItemRule rule = items.get(id);
+        if (rule == null) {
+            rule = new ItemRule();
+            items.put(id, rule);
+            dirty = true;
+        }
+        rule.sanitize();
+        return rule;
+    }
+
     public boolean shouldHighlightEntity(Identifier id, Entity entity) {
+        if (entity instanceof ItemEntity itemEntity && shouldHighlightItem(itemEntity)) {
+            return true;
+        }
+
         EntityRule rule = entities.get(id.toString());
         if (rule == null || !rule.enabled) {
             return false;
@@ -117,6 +158,13 @@ public final class HighlightConfig {
     }
 
     public Integer getEntityColor(Identifier id, Entity entity) {
+        if (entity instanceof ItemEntity itemEntity) {
+            ItemRule itemRule = getEnabledItemRule(itemEntity);
+            if (itemRule != null && passesEntityChecks(itemEntity, itemRule.range, itemRule.throughWalls)) {
+                return parseColor(itemRule.color);
+            }
+        }
+
         EntityRule rule = entities.get(id.toString());
         if (rule == null || !rule.enabled || !shouldHighlightEntity(id, entity)) {
             return null;
@@ -150,6 +198,27 @@ public final class HighlightConfig {
             return null;
         }
         return rule;
+    }
+
+    public ItemRule getEnabledItemRule(ItemEntity entity) {
+        Identifier itemId = Registries.ITEM.getId(entity.getStack().getItem());
+        ItemRule rule = items.get(itemId.toString());
+        if (rule == null || !rule.enabled) {
+            return null;
+        }
+        return rule;
+    }
+
+    public boolean shouldHighlightItem(ItemEntity entity) {
+        ItemRule rule = getEnabledItemRule(entity);
+        return rule != null && passesEntityChecks(entity, rule.range, rule.throughWalls);
+    }
+
+    private boolean passesEntityChecks(Entity entity, int range, boolean throughWalls) {
+        if (!MinecraftClientAccess.playerWithinRange(entity, range)) {
+            return false;
+        }
+        return throughWalls || MinecraftClientAccess.playerCanSee(entity);
     }
 
     public void markDirty() {

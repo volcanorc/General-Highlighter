@@ -3,6 +3,7 @@ package com.codex.glow.screen;
 import com.codex.glow.config.BlockRule;
 import com.codex.glow.config.EntityRule;
 import com.codex.glow.config.HighlightConfig;
+import com.codex.glow.config.ItemRule;
 import com.codex.glow.highlight.BlockScanner;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -16,10 +17,23 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public final class HighlighterScreen extends Screen {
     private static final int ROW_HEIGHT = 18;
     private static final int LIST_TOP = 58;
+    private static final Identifier ALL_DROPPED_ITEMS = Identifier.of("minecraft", "item");
+    private static final Set<String> NOISY_BLOCKS = Set.of(
+            "minecraft:air",
+            "minecraft:cave_air",
+            "minecraft:void_air",
+            "minecraft:water",
+            "minecraft:lava",
+            "minecraft:stone",
+            "minecraft:dirt",
+            "minecraft:grass_block",
+            "minecraft:short_grass"
+    );
 
     private final HighlightConfig config;
     private final BlockScanner scanner;
@@ -32,6 +46,7 @@ public final class HighlighterScreen extends Screen {
     private ButtonWidget toggleButton;
     private ButtonWidget wallsButton;
     private ButtonWidget modeButton;
+    private ButtonWidget allDroppedItemsButton;
     private boolean syncingEditor;
     private Identifier selectedId = Identifier.of("minecraft", "zombie");
     private int scroll;
@@ -51,14 +66,21 @@ public final class HighlighterScreen extends Screen {
             selectedId = Identifier.of("minecraft", "zombie");
             scroll = 0;
             refreshEditor();
-        }).dimensions(12, 26, 82, 20).build());
+        }).dimensions(12, 26, 76, 20).build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Blocks"), button -> {
             tab = Tab.BLOCKS;
             selectedId = Identifier.of("minecraft", "chest");
             scroll = 0;
             refreshEditor();
-        }).dimensions(100, 26, 82, 20).build());
+        }).dimensions(94, 26, 76, 20).build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("Items"), button -> {
+            tab = Tab.ITEMS;
+            selectedId = Identifier.of("minecraft", "diamond");
+            scroll = 0;
+            refreshEditor();
+        }).dimensions(176, 26, 76, 20).build());
 
         searchField = new TextFieldWidget(textRenderer, 12, 52, Math.max(120, width - 184), 18, Text.literal("Search"));
         searchField.setPlaceholder(Text.literal("Search"));
@@ -69,10 +91,13 @@ public final class HighlighterScreen extends Screen {
             if (tab == Tab.ENTITIES) {
                 EntityRule rule = config.ensureEntityRule(selectedId);
                 rule.enabled = !rule.enabled;
-            } else {
+            } else if (tab == Tab.BLOCKS) {
                 BlockRule rule = config.ensureBlockRule(selectedId);
                 rule.enabled = !rule.enabled;
                 scanner.requestRescan();
+            } else {
+                ItemRule rule = config.ensureItemRule(selectedId);
+                rule.enabled = !rule.enabled;
             }
             config.markDirty();
             refreshEditor();
@@ -89,9 +114,11 @@ public final class HighlighterScreen extends Screen {
             }
             if (tab == Tab.ENTITIES) {
                 config.ensureEntityRule(selectedId).color = value.toUpperCase(Locale.ROOT);
-            } else {
+            } else if (tab == Tab.BLOCKS) {
                 config.ensureBlockRule(selectedId).color = value.toUpperCase(Locale.ROOT);
                 scanner.requestRescan();
+            } else {
+                config.ensureItemRule(selectedId).color = value.toUpperCase(Locale.ROOT);
             }
             config.markDirty();
         });
@@ -107,9 +134,11 @@ public final class HighlighterScreen extends Screen {
                 int range = HighlightConfig.clamp(Integer.parseInt(value), 1, 512);
                 if (tab == Tab.ENTITIES) {
                     config.ensureEntityRule(selectedId).range = range;
-                } else {
+                } else if (tab == Tab.BLOCKS) {
                     config.ensureBlockRule(selectedId).range = range;
                     scanner.requestRescan();
+                } else {
+                    config.ensureItemRule(selectedId).range = range;
                 }
                 config.markDirty();
             } catch (NumberFormatException ignored) {
@@ -130,10 +159,13 @@ public final class HighlighterScreen extends Screen {
             if (tab == Tab.ENTITIES) {
                 EntityRule rule = config.ensureEntityRule(selectedId);
                 rule.throughWalls = !rule.throughWalls;
-            } else {
+            } else if (tab == Tab.BLOCKS) {
                 BlockRule rule = config.ensureBlockRule(selectedId);
                 rule.throughWalls = !rule.throughWalls;
                 scanner.requestRescan();
+            } else {
+                ItemRule rule = config.ensureItemRule(selectedId);
+                rule.throughWalls = !rule.throughWalls;
             }
             config.markDirty();
             refreshEditor();
@@ -143,6 +175,14 @@ public final class HighlighterScreen extends Screen {
             BlockRule rule = config.ensureBlockRule(selectedId);
             rule.mode = rule.mode.next();
             scanner.requestRescan();
+            config.markDirty();
+            refreshEditor();
+        }).dimensions(sideX, 240, 140, 20).build());
+
+        allDroppedItemsButton = addDrawableChild(ButtonWidget.builder(Text.literal("All dropped"), button -> {
+            EntityRule rule = config.ensureEntityRule(ALL_DROPPED_ITEMS);
+            rule.enabled = !rule.enabled;
+            rule.color = HighlightConfig.DEFAULT_ITEM_COLOR;
             config.markDirty();
             refreshEditor();
         }).dimensions(sideX, 240, 140, 20).build());
@@ -179,6 +219,8 @@ public final class HighlighterScreen extends Screen {
         context.drawTextWithShadow(textRenderer, "Presets", width - 152, 156, 0xCFCFCF);
         if (tab == Tab.BLOCKS) {
             context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 274, 0xCFCFCF);
+        } else if (tab == Tab.ITEMS) {
+            context.drawTextWithShadow(textRenderer, "Dropped item stacks", width - 152, 232, 0xCFCFCF);
         }
 
         List<Identifier> visible = visibleIds();
@@ -215,10 +257,13 @@ public final class HighlighterScreen extends Screen {
                     if (tab == Tab.ENTITIES) {
                         EntityRule rule = config.ensureEntityRule(selectedId);
                         rule.enabled = !rule.enabled;
-                    } else {
+                    } else if (tab == Tab.BLOCKS) {
                         BlockRule rule = config.ensureBlockRule(selectedId);
                         rule.enabled = !rule.enabled;
                         scanner.requestRescan();
+                    } else {
+                        ItemRule rule = config.ensureItemRule(selectedId);
+                        rule.enabled = !rule.enabled;
                     }
                     config.markDirty();
                 }
@@ -251,11 +296,14 @@ public final class HighlighterScreen extends Screen {
         List<Identifier> ids = new ArrayList<>();
         if (tab == Tab.ENTITIES) {
             Registries.ENTITY_TYPE.getIds().forEach(ids::add);
-        } else {
+        } else if (tab == Tab.BLOCKS) {
             Registries.BLOCK.getIds().forEach(ids::add);
+        } else {
+            Registries.ITEM.getIds().forEach(ids::add);
         }
 
         return ids.stream()
+                .filter(id -> tab != Tab.BLOCKS || !query.isEmpty() || !NOISY_BLOCKS.contains(id.toString()))
                 .filter(id -> query.isEmpty() || id.toString().toLowerCase(Locale.ROOT).contains(query)
                         || HighlightConfig.displayName(id).toLowerCase(Locale.ROOT).contains(query))
                 .sorted(Comparator.comparing(Identifier::toString))
@@ -265,6 +313,10 @@ public final class HighlighterScreen extends Screen {
     private boolean isEnabled(Identifier id) {
         if (tab == Tab.ENTITIES) {
             EntityRule rule = config.entities.get(id.toString());
+            return rule != null && rule.enabled;
+        }
+        if (tab == Tab.ITEMS) {
+            ItemRule rule = config.items.get(id.toString());
             return rule != null && rule.enabled;
         }
         BlockRule rule = config.blocks.get(id.toString());
@@ -288,8 +340,9 @@ public final class HighlighterScreen extends Screen {
             rangeField.setText(Integer.toString(range));
             wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
             modeButton.visible = false;
+            allDroppedItemsButton.visible = false;
             maxHighlightsField.visible = false;
-        } else {
+        } else if (tab == Tab.BLOCKS) {
             BlockRule rule = config.blocks.get(selectedId.toString());
             boolean enabled = rule != null && rule.enabled;
             String color = rule == null ? HighlightConfig.DEFAULT_BLOCK_COLOR : rule.color;
@@ -303,8 +356,25 @@ public final class HighlighterScreen extends Screen {
             wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
             modeButton.setMessage(Text.literal("Mode: " + mode));
             modeButton.visible = true;
+            allDroppedItemsButton.visible = false;
             maxHighlightsField.setText(Integer.toString(maxHighlights));
             maxHighlightsField.visible = true;
+        } else {
+            ItemRule rule = config.items.get(selectedId.toString());
+            EntityRule allDroppedRule = config.entities.get(ALL_DROPPED_ITEMS.toString());
+            boolean enabled = rule != null && rule.enabled;
+            String color = rule == null ? HighlightConfig.DEFAULT_ITEM_COLOR : rule.color;
+            int range = rule == null ? HighlightConfig.DEFAULT_RANGE : rule.range;
+            boolean throughWalls = rule == null || rule.throughWalls;
+            boolean allDroppedEnabled = allDroppedRule != null && allDroppedRule.enabled;
+            toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
+            colorField.setText(color);
+            rangeField.setText(Integer.toString(range));
+            wallsButton.setMessage(Text.literal(throughWalls ? "Through walls: On" : "Through walls: Off"));
+            modeButton.visible = false;
+            allDroppedItemsButton.setMessage(Text.literal(allDroppedEnabled ? "All dropped: On" : "All dropped: Off"));
+            allDroppedItemsButton.visible = true;
+            maxHighlightsField.visible = false;
         }
         syncingEditor = false;
     }
@@ -313,9 +383,11 @@ public final class HighlighterScreen extends Screen {
         colorField.setText(color);
         if (tab == Tab.ENTITIES) {
             config.ensureEntityRule(selectedId).color = color;
-        } else {
+        } else if (tab == Tab.BLOCKS) {
             config.ensureBlockRule(selectedId).color = color;
             scanner.requestRescan();
+        } else {
+            config.ensureItemRule(selectedId).color = color;
         }
         config.markDirty();
         refreshEditor();
@@ -323,6 +395,7 @@ public final class HighlighterScreen extends Screen {
 
     private enum Tab {
         ENTITIES,
-        BLOCKS
+        BLOCKS,
+        ITEMS
     }
 }
