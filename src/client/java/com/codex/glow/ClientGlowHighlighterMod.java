@@ -4,6 +4,7 @@ import com.codex.glow.config.HighlightConfig;
 import com.codex.glow.highlight.BlockScanner;
 import com.codex.glow.render.BlockOutlineRenderer;
 import com.codex.glow.screen.HighlighterScreen;
+import com.codex.glow.screen.SmartHighlighterScreen;
 import com.codex.glow.smart.SmartHighlightManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
@@ -47,7 +48,7 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
-        WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> BlockOutlineRenderer.render(context, blockScanner));
+        WorldRenderEvents.LAST.register(context -> BlockOutlineRenderer.render(context, blockScanner));
         ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> blockScanner.onChunkLoaded(world, chunk.getPos()));
         ClientChunkEvents.CHUNK_UNLOAD.register((world, chunk) -> blockScanner.onChunkUnloaded(chunk.getPos()));
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> config.save());
@@ -63,7 +64,11 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
 
     private void onClientTick(MinecraftClient client) {
         while (openMenuKey.wasPressed()) {
-            client.setScreen(new HighlighterScreen(Text.literal("Highlighter"), config, blockScanner));
+            if (HighlighterScreen.shouldOpenSmartTab()) {
+                client.setScreen(new SmartHighlighterScreen(config, blockScanner, smartHighlightManager));
+            } else {
+                client.setScreen(new HighlighterScreen(Text.literal("Highlighter"), config, blockScanner));
+            }
         }
 
         if (client.world == null || client.player == null) {

@@ -31,7 +31,6 @@ public final class SmartHighlightManager {
 
     public SmartHighlightManager(HighlightConfig config) {
         this.config = config;
-        this.config.ensureSmartTool(MOB_TOOL_ID);
     }
 
     public void setScanner(BlockScanner scanner) {
@@ -78,6 +77,7 @@ public final class SmartHighlightManager {
         }
 
         SmartToolRule rule = config.ensureSmartTool(id);
+        boolean wasRegistered = rule.registered;
         applyMatcher(rule, stack);
         rule.registered = true;
         rule.enabled = true;
@@ -86,11 +86,13 @@ public final class SmartHighlightManager {
             rule.allItems = true;
             rule.blockTargets.clear();
         } else {
-            rule.allMobs = false;
-            rule.allItems = false;
-            rule.entityTargets.clear();
-            rule.itemTargets.clear();
-            rule.blockTargets.clear();
+            if (!wasRegistered) {
+                rule.allMobs = false;
+                rule.allItems = false;
+                rule.entityTargets.clear();
+                rule.itemTargets.clear();
+                rule.blockTargets.clear();
+            }
         }
         config.markDirty();
     }
@@ -101,6 +103,21 @@ public final class SmartHighlightManager {
         rule.label = "Custom tool";
         registerMainhand(player, id, false);
         return id;
+    }
+
+    public void deleteTool(String id) {
+        if (id == null || id.isBlank()) {
+            return;
+        }
+        config.smartTools.remove(id);
+        if (id.equals(activeToolId)) {
+            activeToolId = "";
+            activeUntilTick = 0;
+            if (scanner != null) {
+                scanner.requestRescan();
+            }
+        }
+        config.markDirty();
     }
 
     public boolean shouldHighlightEntity(Entity entity) {

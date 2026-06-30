@@ -29,6 +29,11 @@ import java.util.Queue;
 import java.util.Set;
 
 public final class BlockOutlineRenderer {
+    private static final int MIN_THROUGH_WALL_ALPHA = 220;
+    private static final double THROUGH_WALL_EXPANSION = 0.035;
+    private static final double VISIBLE_OVERLAY_EXPANSION = 0.012;
+    private static final double VISIBLE_FILL_EXPANSION = 0.003;
+
     private static final RenderLayer VISIBLE_FILLED = RenderLayer.of(
             "general_highlighter_filled",
             VertexFormats.POSITION_COLOR,
@@ -98,16 +103,21 @@ public final class BlockOutlineRenderer {
             }
 
             int color = highlight.color();
-            if (highlight.rule().mode == BlockRenderMode.FILLED) {
+            if (highlight.rule().throughWalls) {
+                VertexConsumer filled = context.consumers().getBuffer(THROUGH_WALL_FILLED);
+                drawFilledBlock(matrices, filled, highlight.pos(), color, throughWallAlpha(highlight.rule().fillAlpha), THROUGH_WALL_EXPANSION);
+
+                VertexConsumer lines = context.consumers().getBuffer(THROUGH_WALL_LINES);
+                drawOutline(matrices, lines, highlight.pos(), color, 1.0f);
+            } else if (highlight.rule().mode == BlockRenderMode.OVERLAY) {
                 VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(highlight.rule().throughWalls));
-                drawFilledBlock(matrices, filled, highlight.pos(), color, highlight.rule().fillAlpha);
+                drawFilledBlock(matrices, filled, highlight.pos(), color, Math.max(highlight.rule().fillAlpha, 160), VISIBLE_OVERLAY_EXPANSION);
+            } else if (highlight.rule().mode == BlockRenderMode.FILLED) {
+                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(highlight.rule().throughWalls));
+                drawFilledBlock(matrices, filled, highlight.pos(), color, highlight.rule().fillAlpha, VISIBLE_FILL_EXPANSION);
             } else {
                 VertexConsumer lines = context.consumers().getBuffer(lineLayerFor(highlight.rule().throughWalls));
-                float red = ((color >> 16) & 0xFF) / 255.0f;
-                float green = ((color >> 8) & 0xFF) / 255.0f;
-                float blue = (color & 0xFF) / 255.0f;
-                Box box = new Box(highlight.pos()).expand(0.002);
-                WorldRenderer.drawBox(matrices, lines, box, red, green, blue, 0.9f);
+                drawOutline(matrices, lines, highlight.pos(), color, 0.9f);
             }
         }
 
@@ -119,11 +129,17 @@ public final class BlockOutlineRenderer {
             }
             renderedClusterCounts.put(cluster.style, renderedForStyle + 1);
 
-            if (cluster.filled) {
-                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(cluster.throughWalls));
+            if (cluster.throughWalls) {
+                VertexConsumer filled = context.consumers().getBuffer(THROUGH_WALL_FILLED);
+                drawClusterFilledSurfaces(matrices, filled, cluster.withAlpha(throughWallAlpha(cluster.alpha)));
+
+                VertexConsumer lines = context.consumers().getBuffer(THROUGH_WALL_LINES);
+                drawClusterSurfaces(matrices, lines, cluster);
+            } else if (cluster.filled) {
+                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(false));
                 drawClusterFilledSurfaces(matrices, filled, cluster);
             } else {
-                VertexConsumer lines = context.consumers().getBuffer(lineLayerFor(cluster.throughWalls));
+                VertexConsumer lines = context.consumers().getBuffer(lineLayerFor(false));
                 drawClusterSurfaces(matrices, lines, cluster);
             }
         }
@@ -195,6 +211,18 @@ public final class BlockOutlineRenderer {
         return throughWalls ? THROUGH_WALL_FILLED : VISIBLE_FILLED;
     }
 
+    private static int throughWallAlpha(int alpha) {
+        return Math.max(alpha, MIN_THROUGH_WALL_ALPHA);
+    }
+
+    private static void drawOutline(MatrixStack matrices, VertexConsumer lines, BlockPos pos, int color, float alpha) {
+        float red = ((color >> 16) & 0xFF) / 255.0f;
+        float green = ((color >> 8) & 0xFF) / 255.0f;
+        float blue = (color & 0xFF) / 255.0f;
+        Box box = new Box(pos).expand(0.01);
+        WorldRenderer.drawBox(matrices, lines, box, red, green, blue, alpha);
+    }
+
     private static void drawClusterSurfaces(MatrixStack matrices, VertexConsumer lines, Cluster cluster) {
         drawMergedClusterSurfaces(matrices, lines, null, cluster, false);
     }
@@ -260,9 +288,9 @@ public final class BlockOutlineRenderer {
         }
     }
 
-    private static void drawFilledBlock(MatrixStack matrices, VertexConsumer filled, BlockPos pos, int color, int alpha) {
+    private static void drawFilledBlock(MatrixStack matrices, VertexConsumer filled, BlockPos pos, int color, int alpha, double expansion) {
         for (Direction direction : Direction.values()) {
-            drawFilledFace(matrices, filled, pos, direction, color, alpha);
+            drawFilledFace(matrices, filled, pos, direction, color, alpha, expansion);
         }
     }
 
@@ -341,13 +369,13 @@ public final class BlockOutlineRenderer {
         }
     }
 
-    private static void drawFilledFace(MatrixStack matrices, VertexConsumer filled, BlockPos pos, Direction direction, int color, int alpha) {
-        double x1 = pos.getX();
-        double y1 = pos.getY();
-        double z1 = pos.getZ();
-        double x2 = x1 + 1.0;
-        double y2 = y1 + 1.0;
-        double z2 = z1 + 1.0;
+    private static void drawFilledFace(MatrixStack matrices, VertexConsumer filled, BlockPos pos, Direction direction, int color, int alpha, double expansion) {
+        double x1 = pos.getX() - expansion;
+        double y1 = pos.getY() - expansion;
+        double z1 = pos.getZ() - expansion;
+        double x2 = pos.getX() + 1.0 + expansion;
+        double y2 = pos.getY() + 1.0 + expansion;
+        double z2 = pos.getZ() + 1.0 + expansion;
 
         switch (direction) {
             case DOWN -> drawQuad(filled, matrices, x1, y1, z1, x1, y1, z2, x2, y1, z2, x2, y1, z1, color, alpha);
@@ -425,5 +453,8 @@ public final class BlockOutlineRenderer {
 
     private record Cluster(Set<BlockPos> positions, int color, boolean throughWalls, boolean filled, int alpha,
                            ClusterStyle style, int maxClusters, double nearestDistanceSquared) {
+        private Cluster withAlpha(int nextAlpha) {
+            return new Cluster(positions, color, throughWalls, filled, nextAlpha, style, maxClusters, nearestDistanceSquared);
+        }
     }
 }

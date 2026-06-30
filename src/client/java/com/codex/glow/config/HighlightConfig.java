@@ -65,7 +65,7 @@ public final class HighlightConfig {
 
         config.path = path;
         config.sanitize();
-        config.ensureStarterRules();
+        config.removeUnusedStarterRules();
         config.saveIfDirty();
         return config;
     }
@@ -105,12 +105,76 @@ public final class HighlightConfig {
         allDroppedItems.sanitize();
     }
 
-    private void ensureStarterRules() {
-        ensureEntityRule("minecraft:zombie");
-        ensureEntityRule("minecraft:item");
-        ensureBlockRule("minecraft:chest");
-        ensureItemRule("minecraft:diamond");
-        ensureSmartTool("mob");
+    private void removeUnusedStarterRules() {
+        removeStarterEntityRule("minecraft:zombie");
+        removeStarterEntityRule("minecraft:item");
+        removeStarterBlockRule("minecraft:chest");
+        removeStarterItemRule("minecraft:diamond");
+        removeStarterSmartTool("mob");
+    }
+
+    private void removeStarterEntityRule(String id) {
+        EntityRule rule = entities.get(id);
+        if (rule != null && !rule.enabled
+                && DEFAULT_ENTITY_COLOR.equals(rule.color)
+                && rule.range == DEFAULT_RANGE
+                && rule.throughWalls) {
+            entities.remove(id);
+            dirty = true;
+        }
+    }
+
+    private void removeStarterBlockRule(String id) {
+        BlockRule rule = blocks.get(id);
+        if (rule != null && !rule.enabled
+                && DEFAULT_BLOCK_COLOR.equals(rule.color)
+                && rule.range == DEFAULT_RANGE
+                && (rule.mode == BlockRenderMode.BOX || rule.mode == BlockRenderMode.OVERLAY)
+                && rule.throughWalls
+                && rule.maxHighlights == 2048
+                && rule.maxClusters == 512
+                && (rule.fillAlpha == 72 || rule.fillAlpha == 160)) {
+            blocks.remove(id);
+            blockRuleCacheDirty = true;
+            dirty = true;
+        }
+    }
+
+    private void removeStarterItemRule(String id) {
+        ItemRule rule = items.get(id);
+        if (rule != null && !rule.enabled
+                && DEFAULT_ITEM_COLOR.equals(rule.color)
+                && rule.autoColor
+                && rule.range == DEFAULT_RANGE
+                && rule.throughWalls) {
+            items.remove(id);
+            dirty = true;
+        }
+    }
+
+    private void removeStarterSmartTool(String id) {
+        SmartToolRule rule = smartTools.get(id);
+        if (rule != null
+                && !rule.registered
+                && rule.enabled
+                && "Mob highlight".equals(rule.label)
+                && "ITEM_ID".equals(rule.matchType)
+                && rule.itemId.isBlank()
+                && rule.customNameJson.isBlank()
+                && "Unregistered".equals(rule.displayName)
+                && rule.durationSeconds == 10
+                && rule.range == DEFAULT_RANGE
+                && DEFAULT_ENTITY_COLOR.equals(rule.color)
+                && DEFAULT_BLOCK_COLOR.equals(rule.blockColor)
+                && rule.throughWalls
+                && rule.allMobs
+                && rule.allItems
+                && rule.entityTargets.isEmpty()
+                && rule.itemTargets.isEmpty()
+                && rule.blockTargets.isEmpty()) {
+            smartTools.remove(id);
+            dirty = true;
+        }
     }
 
     public EntityRule ensureEntityRule(Identifier id) {

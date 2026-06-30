@@ -33,6 +33,7 @@ public final class HighlighterScreen extends Screen {
     private static final Map<Tab, Integer> REMEMBERED_SCROLL = new EnumMap<>(Tab.class);
     private static final Map<Tab, Integer> REMEMBERED_CONTROLS_SCROLL = new EnumMap<>(Tab.class);
     private static Tab rememberedTab = Tab.ENTITIES;
+    private static boolean rememberedSmart;
     private static String rememberedSearch = "";
     private static final Set<String> NOISY_BLOCKS = Set.of(
             "minecraft:air",
@@ -87,10 +88,19 @@ public final class HighlighterScreen extends Screen {
             case "items" -> Tab.ITEMS;
             default -> Tab.ENTITIES;
         };
+        rememberedSmart = false;
         rememberedTab = this.tab;
         this.selectedId = rememberedSelectedId(tab);
         this.scroll = REMEMBERED_SCROLL.getOrDefault(tab, 0);
         this.controlsScroll = REMEMBERED_CONTROLS_SCROLL.getOrDefault(tab, 0);
+    }
+
+    public static boolean shouldOpenSmartTab() {
+        return rememberedSmart;
+    }
+
+    public static void rememberSmartTab() {
+        rememberedSmart = true;
     }
 
     @Override
@@ -114,6 +124,7 @@ public final class HighlighterScreen extends Screen {
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Smart"), button -> {
             if (client != null) {
+                rememberSmartTab();
                 client.setScreen(new SmartHighlighterScreen(config, scanner, ClientGlowHighlighterMod.getSmartHighlightManager()));
             }
         }).dimensions(258, 26, 76, 20).build());
@@ -299,7 +310,7 @@ public final class HighlighterScreen extends Screen {
             }
             try {
                 BlockRule rule = config.ensureBlockRule(selectedId);
-                rule.fillAlpha = HighlightConfig.clamp(Integer.parseInt(value), 16, 180);
+                rule.fillAlpha = HighlightConfig.clamp(Integer.parseInt(value), 16, 220);
                 config.markDirty();
             } catch (NumberFormatException ignored) {
             }
@@ -330,7 +341,8 @@ public final class HighlighterScreen extends Screen {
             int y = LIST_TOP + i * ROW_HEIGHT;
             boolean selected = id.equals(selectedId);
             boolean enabled = isEnabled(id);
-            int rowColor = selected ? 0x703A7BFF : 0x40111111;
+            boolean hovered = mouseX >= 12 && mouseX <= 12 + listWidth && mouseY >= y && mouseY <= y + ROW_HEIGHT - 2;
+            int rowColor = selected ? 0x703A7BFF : (hovered ? 0x50303030 : 0x40111111);
             context.fill(12, y, 12 + listWidth, y + ROW_HEIGHT - 2, rowColor);
             context.fill(16, y + 4, 26, y + 14, enabled ? 0xFF4DFF7D : 0xFF555555);
             context.drawTextWithShadow(textRenderer, HighlightConfig.displayName(id), 32, y + 5, enabled ? 0xFFFFFF : 0xBBBBBB);
@@ -451,7 +463,7 @@ public final class HighlighterScreen extends Screen {
                 .filter(id -> tab != Tab.BLOCKS || config.showNoisyBlocks || !query.isEmpty() || !NOISY_BLOCKS.contains(id.toString()))
                 .filter(id -> query.isEmpty() || id.toString().toLowerCase(Locale.ROOT).contains(query)
                         || HighlightConfig.displayName(id).toLowerCase(Locale.ROOT).contains(query))
-                .sorted(Comparator.comparing(Identifier::toString))
+                .sorted(Comparator.comparing((Identifier id) -> !isEnabled(id)).thenComparing(Identifier::toString))
                 .toList();
     }
 
@@ -499,10 +511,10 @@ public final class HighlighterScreen extends Screen {
             String color = rule == null ? HighlightConfig.DEFAULT_BLOCK_COLOR : rule.color;
             int range = rule == null ? HighlightConfig.DEFAULT_RANGE : rule.range;
             boolean throughWalls = rule == null || rule.throughWalls;
-            String mode = rule == null ? BlockRenderMode.BOX.displayName() : rule.mode.displayName();
+            String mode = rule == null ? BlockRenderMode.OVERLAY.displayName() : rule.mode.displayName();
             int maxHighlights = rule == null ? 2048 : rule.maxHighlights;
             int maxClusters = rule == null ? 512 : rule.maxClusters;
-            int fillAlpha = rule == null ? 72 : rule.fillAlpha;
+            int fillAlpha = rule == null ? 160 : rule.fillAlpha;
             toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
             colorField.setText(color);
             rangeField.setText(Integer.toString(range));
@@ -569,6 +581,7 @@ public final class HighlighterScreen extends Screen {
     private void switchTab(Tab nextTab) {
         rememberCurrentState();
         tab = nextTab;
+        rememberedSmart = false;
         rememberedTab = nextTab;
         selectedId = rememberedSelectedId(nextTab);
         scroll = REMEMBERED_SCROLL.getOrDefault(nextTab, 0);
@@ -576,6 +589,7 @@ public final class HighlighterScreen extends Screen {
     }
 
     private void rememberCurrentState() {
+        rememberedSmart = false;
         rememberedTab = tab;
         REMEMBERED_SELECTED.put(tab, selectedId);
         REMEMBERED_SCROLL.put(tab, scroll);
@@ -651,8 +665,8 @@ public final class HighlighterScreen extends Screen {
             return false;
         }
         BlockRule rule = config.blocks.get(selectedId.toString());
-        BlockRenderMode mode = rule == null ? BlockRenderMode.BOX : rule.mode;
-        return mode == BlockRenderMode.FILLED || mode == BlockRenderMode.FILLED_CLUSTER;
+        BlockRenderMode mode = rule == null ? BlockRenderMode.OVERLAY : rule.mode;
+        return mode == BlockRenderMode.OVERLAY || mode == BlockRenderMode.FILLED || mode == BlockRenderMode.FILLED_CLUSTER;
     }
 
     private boolean isOverControls(double mouseX, double mouseY) {

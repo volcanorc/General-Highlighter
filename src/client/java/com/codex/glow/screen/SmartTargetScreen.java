@@ -68,7 +68,8 @@ public final class SmartTargetScreen extends Screen {
             Identifier id = ids.get(scroll + i);
             int y = LIST_TOP + i * ROW_HEIGHT;
             boolean checked = isChecked(id);
-            context.fill(12, y, width - 12, y + ROW_HEIGHT - 2, 0x40111111);
+            boolean hovered = mouseX >= 12 && mouseX <= width - 12 && mouseY >= y && mouseY <= y + ROW_HEIGHT - 2;
+            context.fill(12, y, width - 12, y + ROW_HEIGHT - 2, hovered ? 0x50303030 : 0x40111111);
             context.fill(16, y + 4, 26, y + 14, checked ? 0xFF4DFF7D : 0xFF555555);
             context.drawTextWithShadow(textRenderer, HighlightConfig.displayName(id), 32, y + 5, checked ? 0xFFFFFF : 0xBBBBBB);
             context.drawTextWithShadow(textRenderer, id.toString(), 168, y + 5, 0x777777);
@@ -108,7 +109,7 @@ public final class SmartTargetScreen extends Screen {
         return allIds().stream()
                 .filter(id -> query.isEmpty() || id.toString().toLowerCase(Locale.ROOT).contains(query)
                         || HighlightConfig.displayName(id).toLowerCase(Locale.ROOT).contains(query))
-                .sorted(Comparator.comparing(Identifier::toString))
+                .sorted(Comparator.comparing((Identifier id) -> !isChecked(id)).thenComparing(Identifier::toString))
                 .toList();
     }
 
