@@ -15,4 +15,9 @@ public abstract class ClientWorldBlockUpdateMixin {
     private void generalHighlighter$onBlockUpdate(BlockPos pos, BlockState state, int flags, CallbackInfo ci) {
         ClientGlowHighlighterMod.onClientBlockUpdated(pos);
     }
+
+    @Inject(method = "updateListeners", at = @At("TAIL"))
+    private void generalHighlighter$onUpdateListeners(BlockPos pos, BlockState oldState, BlockState newState, int flags, CallbackInfo ci) {
+        ClientGlowHighlighterMod.onClientBlockUpdated(pos);
+    }
 }

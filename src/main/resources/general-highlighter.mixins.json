@@ -5,7 +5,8 @@
   "client": [
     "ClientWorldBlockUpdateMixin",
     "EntityColorMixin",
-    "EntityGlowMixin"
+    "EntityGlowMixin",
+    "ItemRendererAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

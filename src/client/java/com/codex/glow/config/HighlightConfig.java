@@ -1,10 +1,14 @@
 package com.codex.glow.config;
 
+import com.codex.glow.mixin.client.ItemRendererAccessor;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.color.item.ItemColors;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 
@@ -29,6 +33,7 @@ public final class HighlightConfig {
     public Map<String, EntityRule> entities = new LinkedHashMap<>();
     public Map<String, BlockRule> blocks = new LinkedHashMap<>();
     public Map<String, ItemRule> items = new LinkedHashMap<>();
+    public ItemRule allDroppedItems = new ItemRule();
     public boolean showNoisyBlocks = false;
     public boolean useLoadedChunkRange = false;
 
@@ -72,28 +77,22 @@ public final class HighlightConfig {
             items = new LinkedHashMap<>();
             dirty = true;
         }
+        if (allDroppedItems == null) {
+            allDroppedItems = new ItemRule();
+            dirty = true;
+        }
 
         entities.values().forEach(EntityRule::sanitize);
         blocks.values().forEach(BlockRule::sanitize);
         items.values().forEach(ItemRule::sanitize);
+        allDroppedItems.sanitize();
     }
 
     private void ensureStarterRules() {
         ensureEntityRule("minecraft:zombie");
-        ensureAllDroppedItemsRule();
+        ensureEntityRule("minecraft:item");
         ensureBlockRule("minecraft:chest");
         ensureItemRule("minecraft:diamond");
-    }
-
-    private void ensureAllDroppedItemsRule() {
-        EntityRule rule = entities.get("minecraft:item");
-        if (rule == null) {
-            rule = new EntityRule();
-            rule.color = DEFAULT_ITEM_COLOR;
-            entities.put("minecraft:item", rule);
-            dirty = true;
-        }
-        rule.sanitize();
     }
 
     public EntityRule ensureEntityRule(Identifier id) {
@@ -142,8 +141,8 @@ public final class HighlightConfig {
     }
 
     public boolean shouldHighlightEntity(Identifier id, Entity entity) {
-        if (entity instanceof ItemEntity itemEntity && shouldHighlightItem(itemEntity)) {
-            return true;
+        if (entity instanceof ItemEntity itemEntity) {
+            return shouldHighlightItem(itemEntity);
         }
 
         EntityRule rule = entities.get(id.toString());
@@ -163,8 +162,9 @@ public final class HighlightConfig {
         if (entity instanceof ItemEntity itemEntity) {
             ItemRule itemRule = getEnabledItemRule(itemEntity);
             if (itemRule != null && passesEntityChecks(itemEntity, itemRule.range, itemRule.throughWalls)) {
-                return parseColor(itemRule.color);
+                return itemRule.autoColor ? getAutomaticItemColor(itemEntity.getStack()) : parseColor(itemRule.color);
             }
+            return null;
         }
 
         EntityRule rule = entities.get(id.toString());
@@ -205,10 +205,10 @@ public final class HighlightConfig {
     public ItemRule getEnabledItemRule(ItemEntity entity) {
         Identifier itemId = Registries.ITEM.getId(entity.getStack().getItem());
         ItemRule rule = items.get(itemId.toString());
-        if (rule == null || !rule.enabled) {
-            return null;
+        if (rule != null && rule.enabled) {
+            return rule;
         }
-        return rule;
+        return allDroppedItems.enabled ? allDroppedItems : null;
     }
 
     public boolean shouldHighlightItem(ItemEntity entity) {
@@ -269,6 +269,42 @@ public final class HighlightConfig {
             return id.toString();
         }
         return Character.toUpperCase(path.charAt(0)) + path.substring(1);
+    }
+
+    private static int getAutomaticItemColor(ItemStack stack) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.getItemRenderer() instanceof ItemRendererAccessor accessor) {
+            ItemColors colors = accessor.generalHighlighter$getColors();
+            int tint = colors.getColor(stack, 0);
+            if (tint != -1) {
+                return tint & 0xFFFFFF;
+            }
+        }
+
+        Identifier id = Registries.ITEM.getId(stack.getItem());
+        String path = id.getPath();
+        if (path.contains("diamond")) {
+            return 0x55DDFF;
+        }
+        if (path.contains("redstone")) {
+            return 0xFF2A2A;
+        }
+        if (path.contains("emerald")) {
+            return 0x24D45A;
+        }
+        if (path.contains("gold")) {
+            return 0xFFD84D;
+        }
+        if (path.contains("iron") || path.contains("quartz")) {
+            return 0xDDE4EA;
+        }
+        if (path.contains("sugar_cane") || path.contains("kelp") || path.contains("bamboo")
+                || path.contains("sapling") || path.contains("leaves") || path.contains("seeds")
+                || path.contains("wheat") || path.contains("carrot") || path.contains("potato")
+                || path.contains("cactus")) {
+            return 0x55CC55;
+        }
+        return parseColor(DEFAULT_ITEM_COLOR);
     }
 
     private static final class MinecraftClientAccess {

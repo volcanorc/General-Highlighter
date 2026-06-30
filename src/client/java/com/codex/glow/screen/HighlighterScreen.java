@@ -15,14 +15,20 @@ import net.minecraft.util.Identifier;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public final class HighlighterScreen extends Screen {
     private static final int ROW_HEIGHT = 18;
-    private static final int LIST_TOP = 58;
+    private static final int LIST_TOP = 76;
     private static final Identifier ALL_DROPPED_ITEMS = Identifier.of("minecraft", "item");
+    private static final Map<Tab, Identifier> REMEMBERED_SELECTED = new EnumMap<>(Tab.class);
+    private static final Map<Tab, Integer> REMEMBERED_SCROLL = new EnumMap<>(Tab.class);
+    private static Tab rememberedTab = Tab.ENTITIES;
+    private static String rememberedSearch = "";
     private static final Set<String> NOISY_BLOCKS = Set.of(
             "minecraft:air",
             "minecraft:cave_air",
@@ -49,7 +55,9 @@ public final class HighlighterScreen extends Screen {
     private ButtonWidget showNoisyBlocksButton;
     private ButtonWidget loadedChunkRangeButton;
     private ButtonWidget allDroppedItemsButton;
+    private ButtonWidget itemAutoColorButton;
     private boolean syncingEditor;
+    private boolean syncingSearch;
     private Identifier selectedId = Identifier.of("minecraft", "zombie");
     private int scroll;
 
@@ -57,6 +65,9 @@ public final class HighlighterScreen extends Screen {
         super(title);
         this.config = config;
         this.scanner = scanner;
+        this.tab = rememberedTab;
+        this.selectedId = rememberedSelectedId(tab);
+        this.scroll = REMEMBERED_SCROLL.getOrDefault(tab, 0);
     }
 
     @Override
@@ -64,30 +75,33 @@ public final class HighlighterScreen extends Screen {
         int sideX = width - 152;
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Entities"), button -> {
-            tab = Tab.ENTITIES;
-            selectedId = Identifier.of("minecraft", "zombie");
-            scroll = 0;
+            switchTab(Tab.ENTITIES);
             refreshEditor();
         }).dimensions(12, 26, 76, 20).build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Blocks"), button -> {
-            tab = Tab.BLOCKS;
-            selectedId = Identifier.of("minecraft", "chest");
-            scroll = 0;
+            switchTab(Tab.BLOCKS);
             refreshEditor();
         }).dimensions(94, 26, 76, 20).build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("Items"), button -> {
-            tab = Tab.ITEMS;
-            selectedId = Identifier.of("minecraft", "diamond");
-            scroll = 0;
+            switchTab(Tab.ITEMS);
             refreshEditor();
         }).dimensions(176, 26, 76, 20).build());
 
         searchField = new TextFieldWidget(textRenderer, 12, 52, Math.max(120, width - 184), 18, Text.literal("Search"));
         searchField.setPlaceholder(Text.literal("Search"));
-        searchField.setChangedListener(value -> scroll = 0);
+        searchField.setChangedListener(value -> {
+            rememberedSearch = value;
+            if (!syncingSearch) {
+                scroll = 0;
+                rememberCurrentState();
+            }
+        });
         addDrawableChild(searchField);
+        syncingSearch = true;
+        searchField.setText(rememberedSearch);
+        syncingSearch = false;
 
         toggleButton = addDrawableChild(ButtonWidget.builder(Text.literal("Toggle"), button -> {
             if (tab == Tab.ENTITIES) {
@@ -96,12 +110,13 @@ public final class HighlighterScreen extends Screen {
             } else if (tab == Tab.BLOCKS) {
                 BlockRule rule = config.ensureBlockRule(selectedId);
                 rule.enabled = !rule.enabled;
-                scanner.requestRescan();
+                scanner.requestPriorityRescan();
             } else {
                 ItemRule rule = config.ensureItemRule(selectedId);
                 rule.enabled = !rule.enabled;
             }
             config.markDirty();
+            rememberCurrentState();
             refreshEditor();
         }).dimensions(sideX, 58, 140, 20).build());
 
@@ -118,9 +133,11 @@ public final class HighlighterScreen extends Screen {
                 config.ensureEntityRule(selectedId).color = value.toUpperCase(Locale.ROOT);
             } else if (tab == Tab.BLOCKS) {
                 config.ensureBlockRule(selectedId).color = value.toUpperCase(Locale.ROOT);
-                scanner.requestRescan();
+                scanner.requestPriorityRescan();
             } else {
-                config.ensureItemRule(selectedId).color = value.toUpperCase(Locale.ROOT);
+                ItemRule rule = config.ensureItemRule(selectedId);
+                rule.color = value.toUpperCase(Locale.ROOT);
+                rule.autoColor = false;
             }
             config.markDirty();
         });
@@ -138,7 +155,7 @@ public final class HighlighterScreen extends Screen {
                     config.ensureEntityRule(selectedId).range = range;
                 } else if (tab == Tab.BLOCKS) {
                     config.ensureBlockRule(selectedId).range = range;
-                    scanner.requestRescan();
+                    scanner.requestPriorityRescan();
                 } else {
                     config.ensureItemRule(selectedId).range = range;
                 }
@@ -164,7 +181,6 @@ public final class HighlighterScreen extends Screen {
             } else if (tab == Tab.BLOCKS) {
                 BlockRule rule = config.ensureBlockRule(selectedId);
                 rule.throughWalls = !rule.throughWalls;
-                scanner.requestRescan();
             } else {
                 ItemRule rule = config.ensureItemRule(selectedId);
                 rule.throughWalls = !rule.throughWalls;
@@ -176,7 +192,7 @@ public final class HighlighterScreen extends Screen {
         modeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mode"), button -> {
             BlockRule rule = config.ensureBlockRule(selectedId);
             rule.mode = rule.mode.next();
-            scanner.requestRescan();
+            scanner.requestPriorityRescan();
             config.markDirty();
             refreshEditor();
         }).dimensions(sideX, 240, 140, 20).build());
@@ -190,18 +206,24 @@ public final class HighlighterScreen extends Screen {
 
         loadedChunkRangeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Loaded range"), button -> {
             config.useLoadedChunkRange = !config.useLoadedChunkRange;
-            scanner.requestRescan();
+            scanner.requestPriorityRescan();
             config.markDirty();
             refreshEditor();
         }).dimensions(sideX, 292, 140, 20).build());
 
         allDroppedItemsButton = addDrawableChild(ButtonWidget.builder(Text.literal("All dropped"), button -> {
-            EntityRule rule = config.ensureEntityRule(ALL_DROPPED_ITEMS);
-            rule.enabled = !rule.enabled;
-            rule.color = HighlightConfig.DEFAULT_ITEM_COLOR;
+            config.allDroppedItems.enabled = !config.allDroppedItems.enabled;
+            config.allDroppedItems.autoColor = true;
             config.markDirty();
             refreshEditor();
         }).dimensions(sideX, 240, 140, 20).build());
+
+        itemAutoColorButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto color"), button -> {
+            ItemRule rule = config.ensureItemRule(selectedId);
+            rule.autoColor = !rule.autoColor;
+            config.markDirty();
+            refreshEditor();
+        }).dimensions(sideX, 266, 140, 20).build());
 
         maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 326, 140, 18, Text.literal("Max highlights"));
         maxHighlightsField.setMaxLength(5);
@@ -212,7 +234,7 @@ public final class HighlighterScreen extends Screen {
             try {
                 BlockRule rule = config.ensureBlockRule(selectedId);
                 rule.maxHighlights = HighlightConfig.clamp(Integer.parseInt(value), 1, 20000);
-                scanner.requestRescan();
+                scanner.requestPriorityRescan();
                 config.markDirty();
             } catch (NumberFormatException ignored) {
             }
@@ -243,7 +265,8 @@ public final class HighlighterScreen extends Screen {
         List<Identifier> visible = visibleIds();
         int listBottom = height - 18;
         int rows = Math.max(1, (listBottom - LIST_TOP) / ROW_HEIGHT);
-        int maxRows = Math.min(rows, visible.size() - scroll);
+        clampScroll(visible, rows);
+        int maxRows = Math.min(rows, Math.max(0, visible.size() - scroll));
         int listWidth = Math.max(120, width - 184);
 
         for (int i = 0; i < maxRows; i++) {
@@ -265,6 +288,7 @@ public final class HighlighterScreen extends Screen {
         int listBottom = height - 18;
         int rows = Math.max(1, (listBottom - LIST_TOP) / ROW_HEIGHT);
         int listWidth = Math.max(120, width - 184);
+        clampScroll(visible, rows);
 
         if (mouseX >= 12 && mouseX <= 12 + listWidth && mouseY >= LIST_TOP && mouseY <= listBottom) {
             int index = scroll + (int) ((mouseY - LIST_TOP) / ROW_HEIGHT);
@@ -277,13 +301,14 @@ public final class HighlighterScreen extends Screen {
                     } else if (tab == Tab.BLOCKS) {
                         BlockRule rule = config.ensureBlockRule(selectedId);
                         rule.enabled = !rule.enabled;
-                        scanner.requestRescan();
+                        scanner.requestPriorityRescan();
                     } else {
                         ItemRule rule = config.ensureItemRule(selectedId);
                         rule.enabled = !rule.enabled;
                     }
                     config.markDirty();
                 }
+                rememberCurrentState();
                 refreshEditor();
                 return true;
             }
@@ -299,11 +324,13 @@ public final class HighlighterScreen extends Screen {
         int rows = Math.max(1, (listBottom - LIST_TOP) / ROW_HEIGHT);
         int maxScroll = Math.max(0, visible.size() - rows);
         scroll = HighlightConfig.clamp(scroll - (int) Math.signum(verticalAmount), 0, maxScroll);
+        rememberCurrentState();
         return true;
     }
 
     @Override
     public void close() {
+        rememberCurrentState();
         config.save();
         super.close();
     }
@@ -320,6 +347,7 @@ public final class HighlighterScreen extends Screen {
         }
 
         return ids.stream()
+                .filter(id -> tab != Tab.ENTITIES || !id.equals(ALL_DROPPED_ITEMS))
                 .filter(id -> tab != Tab.BLOCKS || config.showNoisyBlocks || !query.isEmpty() || !NOISY_BLOCKS.contains(id.toString()))
                 .filter(id -> query.isEmpty() || id.toString().toLowerCase(Locale.ROOT).contains(query)
                         || HighlightConfig.displayName(id).toLowerCase(Locale.ROOT).contains(query))
@@ -360,6 +388,7 @@ public final class HighlighterScreen extends Screen {
             showNoisyBlocksButton.visible = false;
             loadedChunkRangeButton.visible = false;
             allDroppedItemsButton.visible = false;
+            itemAutoColorButton.visible = false;
             maxHighlightsField.visible = false;
         } else if (tab == Tab.BLOCKS) {
             BlockRule rule = config.blocks.get(selectedId.toString());
@@ -380,16 +409,16 @@ public final class HighlighterScreen extends Screen {
             loadedChunkRangeButton.setMessage(Text.literal(config.useLoadedChunkRange ? "Loaded chunks range: On" : "Loaded chunks range: Off"));
             loadedChunkRangeButton.visible = true;
             allDroppedItemsButton.visible = false;
+            itemAutoColorButton.visible = false;
             maxHighlightsField.setText(Integer.toString(maxHighlights));
             maxHighlightsField.visible = true;
         } else {
             ItemRule rule = config.items.get(selectedId.toString());
-            EntityRule allDroppedRule = config.entities.get(ALL_DROPPED_ITEMS.toString());
             boolean enabled = rule != null && rule.enabled;
             String color = rule == null ? HighlightConfig.DEFAULT_ITEM_COLOR : rule.color;
             int range = rule == null ? HighlightConfig.DEFAULT_RANGE : rule.range;
             boolean throughWalls = rule == null || rule.throughWalls;
-            boolean allDroppedEnabled = allDroppedRule != null && allDroppedRule.enabled;
+            boolean autoColor = rule == null || rule.autoColor;
             toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
             colorField.setText(color);
             rangeField.setText(Integer.toString(range));
@@ -397,8 +426,10 @@ public final class HighlighterScreen extends Screen {
             modeButton.visible = false;
             showNoisyBlocksButton.visible = false;
             loadedChunkRangeButton.visible = false;
-            allDroppedItemsButton.setMessage(Text.literal(allDroppedEnabled ? "All dropped: On" : "All dropped: Off"));
+            allDroppedItemsButton.setMessage(Text.literal(config.allDroppedItems.enabled ? "All dropped: On" : "All dropped: Off"));
             allDroppedItemsButton.visible = true;
+            itemAutoColorButton.setMessage(Text.literal(autoColor ? "Auto color: On" : "Auto color: Off"));
+            itemAutoColorButton.visible = true;
             maxHighlightsField.visible = false;
         }
         syncingEditor = false;
@@ -410,12 +441,44 @@ public final class HighlighterScreen extends Screen {
             config.ensureEntityRule(selectedId).color = color;
         } else if (tab == Tab.BLOCKS) {
             config.ensureBlockRule(selectedId).color = color;
-            scanner.requestRescan();
+            scanner.requestPriorityRescan();
         } else {
-            config.ensureItemRule(selectedId).color = color;
+            ItemRule rule = config.ensureItemRule(selectedId);
+            rule.color = color;
+            rule.autoColor = false;
         }
         config.markDirty();
         refreshEditor();
+    }
+
+    private void switchTab(Tab nextTab) {
+        rememberCurrentState();
+        tab = nextTab;
+        rememberedTab = nextTab;
+        selectedId = rememberedSelectedId(nextTab);
+        scroll = REMEMBERED_SCROLL.getOrDefault(nextTab, 0);
+    }
+
+    private void rememberCurrentState() {
+        rememberedTab = tab;
+        REMEMBERED_SELECTED.put(tab, selectedId);
+        REMEMBERED_SCROLL.put(tab, scroll);
+        if (searchField != null) {
+            rememberedSearch = searchField.getText();
+        }
+    }
+
+    private static Identifier rememberedSelectedId(Tab tab) {
+        return REMEMBERED_SELECTED.computeIfAbsent(tab, current -> switch (current) {
+            case ENTITIES -> Identifier.of("minecraft", "zombie");
+            case BLOCKS -> Identifier.of("minecraft", "chest");
+            case ITEMS -> Identifier.of("minecraft", "diamond");
+        });
+    }
+
+    private void clampScroll(List<Identifier> visible, int rows) {
+        int maxScroll = Math.max(0, visible.size() - rows);
+        scroll = HighlightConfig.clamp(scroll, 0, maxScroll);
     }
 
     private enum Tab {

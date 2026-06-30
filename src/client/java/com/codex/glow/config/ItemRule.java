@@ -3,6 +3,7 @@ package com.codex.glow.config;
 public final class ItemRule {
     public boolean enabled = false;
     public String color = HighlightConfig.DEFAULT_ITEM_COLOR;
+    public boolean autoColor = true;
     public int range = HighlightConfig.DEFAULT_RANGE;
     public boolean throughWalls = true;
 

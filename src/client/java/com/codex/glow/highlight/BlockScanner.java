@@ -30,6 +30,7 @@ public final class BlockScanner {
 
     private ChunkPos lastPlayerChunk;
     private int lastRange = -1;
+    private int prioritySectionsRemaining;
 
     public BlockScanner(HighlightConfig config) {
         this.config = config;
@@ -51,12 +52,16 @@ public final class BlockScanner {
         ChunkPos playerChunk = player.getChunkPos();
         int range = effectiveScanRange(client);
         if (!playerChunk.equals(lastPlayerChunk) || range != lastRange || scanQueue.isEmpty()) {
-            rebuildQueue(world, playerChunk, range);
+            rebuildQueue(world, playerChunk, player.getBlockY(), range);
             pruneDistantSections(playerChunk, range);
         }
 
-        for (int i = 0; i < SECTIONS_PER_TICK && !scanQueue.isEmpty(); i++) {
+        int budget = prioritySectionsRemaining > 0 ? Math.max(SECTIONS_PER_TICK, 64) : SECTIONS_PER_TICK;
+        for (int i = 0; i < budget && !scanQueue.isEmpty(); i++) {
             scanSection(world, player, scanQueue.poll(), range);
+            if (prioritySectionsRemaining > 0) {
+                prioritySectionsRemaining--;
+            }
         }
     }
 
@@ -65,6 +70,7 @@ public final class BlockScanner {
         scanQueue.clear();
         lastPlayerChunk = null;
         lastRange = -1;
+        prioritySectionsRemaining = 0;
     }
 
     public void requestRescan() {
@@ -73,9 +79,16 @@ public final class BlockScanner {
         scanQueue.clear();
     }
 
+    public void requestPriorityRescan() {
+        requestRescan();
+        prioritySectionsRemaining = 256;
+    }
+
     public void onChunkLoaded(ClientWorld world, ChunkPos pos) {
         if (config.hasEnabledBlocks()) {
-            enqueueChunkSections(world, pos);
+            enqueueChunkSections(world, pos, MinecraftClient.getInstance().player == null
+                    ? world.getBottomY()
+                    : MinecraftClient.getInstance().player.getBlockY());
         }
     }
 
@@ -117,14 +130,19 @@ public final class BlockScanner {
                 .toList();
     }
 
-    private void rebuildQueue(ClientWorld world, ChunkPos center, int range) {
+    private void rebuildQueue(ClientWorld world, ChunkPos center, int playerY, int range) {
         scanQueue.clear();
         int chunkRadius = Math.max(1, (int) Math.ceil(range / 16.0));
+        List<ChunkPos> chunks = new ArrayList<>();
         for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
             for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
-                enqueueChunkSections(world, new ChunkPos(center.x + dx, center.z + dz));
+                chunks.add(new ChunkPos(center.x + dx, center.z + dz));
             }
         }
+        chunks.stream()
+                .sorted(Comparator.comparingInt(chunk ->
+                        square(chunk.x - center.x) + square(chunk.z - center.z)))
+                .forEach(chunk -> enqueueChunkSections(world, chunk, playerY));
         lastPlayerChunk = center;
         lastRange = range;
     }
@@ -177,12 +195,16 @@ public final class BlockScanner {
         }
     }
 
-    private void enqueueChunkSections(ClientWorld world, ChunkPos chunkPos) {
+    private void enqueueChunkSections(ClientWorld world, ChunkPos chunkPos, int playerY) {
         int minY = Math.floorDiv(world.getBottomY(), SECTION_HEIGHT) * SECTION_HEIGHT;
         int maxY = world.getTopY();
+        List<Integer> starts = new ArrayList<>();
         for (int y = minY; y < maxY; y += SECTION_HEIGHT) {
-            scanQueue.add(new ScanSection(chunkPos.x, chunkPos.z, y));
+            starts.add(y);
         }
+        starts.stream()
+                .sorted(Comparator.comparingInt(y -> Math.abs(y + SECTION_HEIGHT / 2 - playerY)))
+                .forEach(y -> scanQueue.add(new ScanSection(chunkPos.x, chunkPos.z, y)));
     }
 
     private int effectiveScanRange(MinecraftClient client) {
@@ -194,6 +216,10 @@ public final class BlockScanner {
 
     private int effectiveRuleRange(BlockRule rule) {
         return config.useLoadedChunkRange && lastRange > 0 ? lastRange : rule.range;
+    }
+
+    private static int square(int value) {
+        return value * value;
     }
 
     private record SectionKey(int chunkX, int chunkZ, int startY) {
