@@ -1,6 +1,6 @@
 # General Highlighter
 
-A Fabric 1.21.1 client-side mod that highlights selected entities and loaded blocks the client already knows about.
+A Fabric Minecraft 1.21.1-only client-side mod that highlights selected entities and loaded blocks the client already knows about.
 
 ## Behavior
 
