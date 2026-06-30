@@ -2,6 +2,7 @@ package com.codex.glow.highlight;
 
 import com.codex.glow.config.BlockRule;
 import com.codex.glow.config.HighlightConfig;
+import com.codex.glow.smart.SmartHighlightManager;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -28,6 +29,7 @@ public final class BlockScanner {
     private static final int IMMEDIATE_BLOCK_LIMIT = 65_536;
 
     private final HighlightConfig config;
+    private final SmartHighlightManager smartHighlightManager;
     private final Map<SectionKey, List<BlockHighlight>> highlightsBySection = new HashMap<>();
     private final ArrayDeque<ScanSection> scanQueue = new ArrayDeque<>();
 
@@ -38,8 +40,9 @@ public final class BlockScanner {
     private String statusText = "Ready";
     private int statusHoldTicks;
 
-    public BlockScanner(HighlightConfig config) {
+    public BlockScanner(HighlightConfig config, SmartHighlightManager smartHighlightManager) {
         this.config = config;
+        this.smartHighlightManager = smartHighlightManager;
     }
 
     public void tick(MinecraftClient client) {
@@ -50,7 +53,7 @@ public final class BlockScanner {
             return;
         }
 
-        if (!config.hasEnabledBlocks()) {
+        if (!config.hasEnabledBlocks() && !smartHighlightManager.hasActiveBlockTargets()) {
             clear();
             return;
         }
@@ -112,7 +115,7 @@ public final class BlockScanner {
     }
 
     public void onChunkLoaded(ClientWorld world, ChunkPos pos) {
-        if (config.hasEnabledBlocks()) {
+        if (config.hasEnabledBlocks() || smartHighlightManager.hasActiveBlockTargets()) {
             enqueueChunkSections(world, pos, MinecraftClient.getInstance().player == null
                     ? world.getBottomY()
                     : MinecraftClient.getInstance().player.getBlockY());
@@ -201,6 +204,9 @@ public final class BlockScanner {
                     mutable.set((section.chunkX << 4) + x, y, (section.chunkZ << 4) + z);
                     BlockState state = chunk.getBlockState(mutable);
                     BlockRule rule = config.getEnabledBlockRule(state.getBlock());
+                    if (rule == null) {
+                        rule = smartHighlightManager.getEnabledBlockRule(state.getBlock());
+                    }
                     if (rule == null) {
                         continue;
                     }
@@ -328,7 +334,7 @@ public final class BlockScanner {
 
     private int effectiveScanRange(MinecraftClient client) {
         if (!config.useLoadedChunkRange) {
-            return config.maxEnabledBlockRange();
+            return Math.max(config.maxEnabledBlockRange(), smartHighlightManager.activeBlockRange());
         }
         return Math.max(16, client.options.getViewDistance().getValue() * 16);
     }

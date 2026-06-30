@@ -30,6 +30,9 @@ Pick the jar for the branch you want:
 - The Blocks tab shows scan status, cached match count, queued scan sections, and a fast-scan toggle.
 - Client block updates invalidate nearby cached block highlights so placing or breaking selected blocks refreshes quickly.
 - The Items tab owns dropped item highlighting, including a general `All dropped` toggle and item-specific overrides.
+- The Smart tab can register the current mainhand item as a temporary highlight trigger.
+- Smart tools match exact styled custom names for renamed/RGB server items, or item id for unnamed items.
+- Right-clicking a registered Smart tool resets its temporary highlight timer without blocking normal item use.
 
 ## Build
 

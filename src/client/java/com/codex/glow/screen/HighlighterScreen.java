@@ -1,5 +1,6 @@
 package com.codex.glow.screen;
 
+import com.codex.glow.ClientGlowHighlighterMod;
 import com.codex.glow.config.BlockRule;
 import com.codex.glow.config.BlockRenderMode;
 import com.codex.glow.config.EntityRule;
@@ -79,6 +80,19 @@ public final class HighlighterScreen extends Screen {
         this.controlsScroll = REMEMBERED_CONTROLS_SCROLL.getOrDefault(tab, 0);
     }
 
+    public HighlighterScreen(Text title, HighlightConfig config, BlockScanner scanner, String initialTab) {
+        this(title, config, scanner);
+        this.tab = switch (initialTab) {
+            case "blocks" -> Tab.BLOCKS;
+            case "items" -> Tab.ITEMS;
+            default -> Tab.ENTITIES;
+        };
+        rememberedTab = this.tab;
+        this.selectedId = rememberedSelectedId(tab);
+        this.scroll = REMEMBERED_SCROLL.getOrDefault(tab, 0);
+        this.controlsScroll = REMEMBERED_CONTROLS_SCROLL.getOrDefault(tab, 0);
+    }
+
     @Override
     protected void init() {
         int sideX = width - 152;
@@ -97,6 +111,12 @@ public final class HighlighterScreen extends Screen {
             switchTab(Tab.ITEMS);
             refreshEditor();
         }).dimensions(176, 26, 76, 20).build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("Smart"), button -> {
+            if (client != null) {
+                client.setScreen(new SmartHighlighterScreen(config, scanner, ClientGlowHighlighterMod.getSmartHighlightManager()));
+            }
+        }).dimensions(258, 26, 76, 20).build());
 
         searchField = new TextFieldWidget(textRenderer, 12, 52, Math.max(120, width - 184), 18, Text.literal("Search"));
         searchField.setPlaceholder(Text.literal("Search"));

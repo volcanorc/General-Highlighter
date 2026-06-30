@@ -4,19 +4,24 @@ import com.codex.glow.config.HighlightConfig;
 import com.codex.glow.highlight.BlockScanner;
 import com.codex.glow.render.BlockOutlineRenderer;
 import com.codex.glow.screen.HighlighterScreen;
+import com.codex.glow.smart.SmartHighlightManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseItemCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.TypedActionResult;
 import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
@@ -25,12 +30,15 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
 
     private static HighlightConfig config;
     private static BlockScanner blockScanner;
+    private static SmartHighlightManager smartHighlightManager;
     private static KeyBinding openMenuKey;
 
     @Override
     public void onInitializeClient() {
         config = HighlightConfig.load();
-        blockScanner = new BlockScanner(config);
+        smartHighlightManager = new SmartHighlightManager(config);
+        blockScanner = new BlockScanner(config, smartHighlightManager);
+        smartHighlightManager.setScanner(blockScanner);
         openMenuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.general-highlighter.open_menu",
                 InputUtil.Type.KEYSYM,
@@ -43,6 +51,14 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
         ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> blockScanner.onChunkLoaded(world, chunk.getPos()));
         ClientChunkEvents.CHUNK_UNLOAD.register((world, chunk) -> blockScanner.onChunkUnloaded(chunk.getPos()));
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> config.save());
+        UseItemCallback.EVENT.register((player, world, hand) -> {
+            smartHighlightManager.handleUse(player, world, hand);
+            return TypedActionResult.pass(player.getStackInHand(hand));
+        });
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            smartHighlightManager.handleUse(player, world, hand);
+            return ActionResult.PASS;
+        });
     }
 
     private void onClientTick(MinecraftClient client) {
@@ -56,6 +72,7 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
         }
 
         blockScanner.tick(client);
+        smartHighlightManager.tick(client);
         config.saveIfDirty();
     }
 
@@ -65,7 +82,7 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
         }
 
         Identifier id = Registries.ENTITY_TYPE.getId(entity.getType());
-        return config.shouldHighlightEntity(id, entity);
+        return config.shouldHighlightEntity(id, entity) || smartHighlightManager.shouldHighlightEntity(entity);
     }
 
     public static Integer getEntityGlowColor(Entity entity) {
@@ -74,12 +91,17 @@ public final class ClientGlowHighlighterMod implements ClientModInitializer {
         }
 
         Identifier id = Registries.ENTITY_TYPE.getId(entity.getType());
-        return config.getEntityColor(id, entity);
+        Integer color = config.getEntityColor(id, entity);
+        return color == null ? smartHighlightManager.getEntityColor(entity) : color;
     }
 
     public static void onClientBlockUpdated(BlockPos pos) {
         if (blockScanner != null && pos != null) {
             blockScanner.onBlockUpdated(pos);
         }
+    }
+
+    public static SmartHighlightManager getSmartHighlightManager() {
+        return smartHighlightManager;
     }
 }

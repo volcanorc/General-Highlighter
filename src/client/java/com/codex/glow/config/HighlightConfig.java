@@ -35,6 +35,7 @@ public final class HighlightConfig {
     public Map<String, EntityRule> entities = new LinkedHashMap<>();
     public Map<String, BlockRule> blocks = new LinkedHashMap<>();
     public Map<String, ItemRule> items = new LinkedHashMap<>();
+    public Map<String, SmartToolRule> smartTools = new LinkedHashMap<>();
     public ItemRule allDroppedItems = new ItemRule();
     public boolean showNoisyBlocks = false;
     public boolean useLoadedChunkRange = false;
@@ -82,6 +83,10 @@ public final class HighlightConfig {
             items = new LinkedHashMap<>();
             dirty = true;
         }
+        if (smartTools == null) {
+            smartTools = new LinkedHashMap<>();
+            dirty = true;
+        }
         if (allDroppedItems == null) {
             allDroppedItems = new ItemRule();
             dirty = true;
@@ -96,6 +101,7 @@ public final class HighlightConfig {
         entities.values().forEach(EntityRule::sanitize);
         blocks.values().forEach(BlockRule::sanitize);
         items.values().forEach(ItemRule::sanitize);
+        smartTools.values().forEach(SmartToolRule::sanitize);
         allDroppedItems.sanitize();
     }
 
@@ -104,6 +110,7 @@ public final class HighlightConfig {
         ensureEntityRule("minecraft:item");
         ensureBlockRule("minecraft:chest");
         ensureItemRule("minecraft:diamond");
+        ensureSmartTool("mob");
     }
 
     public EntityRule ensureEntityRule(Identifier id) {
@@ -145,6 +152,17 @@ public final class HighlightConfig {
         if (rule == null) {
             rule = new ItemRule();
             items.put(id, rule);
+            dirty = true;
+        }
+        rule.sanitize();
+        return rule;
+    }
+
+    public SmartToolRule ensureSmartTool(String id) {
+        SmartToolRule rule = smartTools.get(id);
+        if (rule == null) {
+            rule = new SmartToolRule();
+            smartTools.put(id, rule);
             dirty = true;
         }
         rule.sanitize();
@@ -305,7 +323,7 @@ public final class HighlightConfig {
         blockRuleCacheDirty = false;
     }
 
-    private static int getAutomaticItemColor(ItemStack stack) {
+    public static int getAutomaticItemColor(ItemStack stack) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getItemRenderer() instanceof ItemRendererAccessor accessor) {
             ItemColors colors = accessor.generalHighlighter$getColors();
