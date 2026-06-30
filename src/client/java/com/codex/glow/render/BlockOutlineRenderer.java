@@ -22,6 +22,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -110,7 +111,14 @@ public final class BlockOutlineRenderer {
             }
         }
 
-        for (Cluster cluster : buildClusters(highlights)) {
+        Map<ClusterStyle, Integer> renderedClusterCounts = new HashMap<>();
+        for (Cluster cluster : buildClusters(highlights, client.player.getPos())) {
+            int renderedForStyle = renderedClusterCounts.getOrDefault(cluster.style, 0);
+            if (renderedForStyle >= cluster.maxClusters) {
+                continue;
+            }
+            renderedClusterCounts.put(cluster.style, renderedForStyle + 1);
+
             if (cluster.filled) {
                 VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(cluster.throughWalls));
                 drawClusterFilledSurfaces(matrices, filled, cluster);
@@ -124,21 +132,23 @@ public final class BlockOutlineRenderer {
         matrices.pop();
     }
 
-    private static List<Cluster> buildClusters(List<BlockHighlight> highlights) {
-        Map<ClusterStyle, Set<BlockPos>> grouped = new HashMap<>();
+    private static List<Cluster> buildClusters(List<BlockHighlight> highlights, Vec3d playerPos) {
+        Map<ClusterStyle, ClusterGroup> grouped = new HashMap<>();
         for (BlockHighlight highlight : highlights) {
             if (isClusterMode(highlight.rule().mode)) {
                 boolean filled = highlight.rule().mode == BlockRenderMode.FILLED_CLUSTER;
-                grouped.computeIfAbsent(new ClusterStyle(highlight.color(), highlight.rule().throughWalls, filled, highlight.rule().fillAlpha), ignored -> new HashSet<>())
-                        .add(highlight.pos());
+                ClusterStyle style = new ClusterStyle(highlight.color(), highlight.rule().throughWalls, filled, highlight.rule().fillAlpha);
+                ClusterGroup group = grouped.computeIfAbsent(style, ignored -> new ClusterGroup());
+                group.positions.add(highlight.pos());
+                group.maxClusters = Math.min(group.maxClusters, highlight.rule().maxClusters);
             }
         }
 
         List<Cluster> clusters = new ArrayList<>();
-        for (Map.Entry<ClusterStyle, Set<BlockPos>> group : grouped.entrySet()) {
+        for (Map.Entry<ClusterStyle, ClusterGroup> group : grouped.entrySet()) {
             Set<BlockPos> visited = new HashSet<>();
             Queue<BlockPos> queue = new ArrayDeque<>();
-            Set<BlockPos> remaining = group.getValue();
+            Set<BlockPos> remaining = group.getValue().positions;
 
             for (BlockPos start : remaining) {
                 if (visited.contains(start)) {
@@ -164,10 +174,12 @@ public final class BlockOutlineRenderer {
                 }
 
                 ClusterStyle style = group.getKey();
-                clusters.add(new Cluster(positions, style.color, style.throughWalls, style.filled, style.alpha));
+                clusters.add(new Cluster(positions, style.color, style.throughWalls, style.filled, style.alpha, style, group.getValue().maxClusters,
+                        nearestDistanceSquared(positions, playerPos)));
             }
         }
 
+        clusters.sort(Comparator.comparingDouble(Cluster::nearestDistanceSquared));
         return clusters;
     }
 
@@ -184,21 +196,66 @@ public final class BlockOutlineRenderer {
     }
 
     private static void drawClusterSurfaces(MatrixStack matrices, VertexConsumer lines, Cluster cluster) {
-        for (BlockPos pos : cluster.positions) {
-            for (Direction direction : Direction.values()) {
-                if (!cluster.positions.contains(pos.offset(direction))) {
-                    drawFace(matrices, lines, pos, direction, cluster.color);
-                }
-            }
-        }
+        drawMergedClusterSurfaces(matrices, lines, null, cluster, false);
     }
 
     private static void drawClusterFilledSurfaces(MatrixStack matrices, VertexConsumer filled, Cluster cluster) {
+        drawMergedClusterSurfaces(matrices, null, filled, cluster, true);
+    }
+
+    private static void drawMergedClusterSurfaces(MatrixStack matrices, VertexConsumer lines, VertexConsumer filled, Cluster cluster, boolean fill) {
+        Map<FacePlane, Set<GridCell>> faces = new HashMap<>();
         for (BlockPos pos : cluster.positions) {
             for (Direction direction : Direction.values()) {
                 if (!cluster.positions.contains(pos.offset(direction))) {
-                    drawFilledFace(matrices, filled, pos, direction, cluster.color, cluster.alpha);
+                    FacePlane plane = facePlane(pos, direction);
+                    faces.computeIfAbsent(plane, ignored -> new HashSet<>()).add(faceCell(pos, direction));
                 }
+            }
+        }
+
+        for (Map.Entry<FacePlane, Set<GridCell>> entry : faces.entrySet()) {
+            drawMergedPlane(matrices, lines, filled, entry.getKey(), entry.getValue(), cluster.color, cluster.alpha, fill);
+        }
+    }
+
+    private static void drawMergedPlane(MatrixStack matrices, VertexConsumer lines, VertexConsumer filled,
+                                        FacePlane plane, Set<GridCell> cells, int color, int alpha, boolean fill) {
+        Set<GridCell> remaining = new HashSet<>(cells);
+        while (!remaining.isEmpty()) {
+            GridCell start = remaining.stream()
+                    .min(Comparator.comparingInt(GridCell::b).thenComparingInt(GridCell::a))
+                    .orElseThrow();
+
+            int width = 1;
+            while (remaining.contains(new GridCell(start.a + width, start.b))) {
+                width++;
+            }
+
+            int height = 1;
+            boolean canGrow = true;
+            while (canGrow) {
+                for (int offset = 0; offset < width; offset++) {
+                    if (!remaining.contains(new GridCell(start.a + offset, start.b + height))) {
+                        canGrow = false;
+                        break;
+                    }
+                }
+                if (canGrow) {
+                    height++;
+                }
+            }
+
+            for (int db = 0; db < height; db++) {
+                for (int da = 0; da < width; da++) {
+                    remaining.remove(new GridCell(start.a + da, start.b + db));
+                }
+            }
+
+            if (fill) {
+                drawMergedFilledFace(matrices, filled, plane, start.a, start.b, width, height, color, alpha);
+            } else {
+                drawMergedFace(matrices, lines, plane, start.a, start.b, width, height, color);
             }
         }
     }
@@ -207,6 +264,63 @@ public final class BlockOutlineRenderer {
         for (Direction direction : Direction.values()) {
             drawFilledFace(matrices, filled, pos, direction, color, alpha);
         }
+    }
+
+    private static FacePlane facePlane(BlockPos pos, Direction direction) {
+        return switch (direction) {
+            case DOWN -> new FacePlane(direction, pos.getY());
+            case UP -> new FacePlane(direction, pos.getY() + 1);
+            case NORTH -> new FacePlane(direction, pos.getZ());
+            case SOUTH -> new FacePlane(direction, pos.getZ() + 1);
+            case WEST -> new FacePlane(direction, pos.getX());
+            case EAST -> new FacePlane(direction, pos.getX() + 1);
+        };
+    }
+
+    private static GridCell faceCell(BlockPos pos, Direction direction) {
+        return switch (direction) {
+            case DOWN, UP -> new GridCell(pos.getX(), pos.getZ());
+            case NORTH, SOUTH -> new GridCell(pos.getX(), pos.getY());
+            case WEST, EAST -> new GridCell(pos.getZ(), pos.getY());
+        };
+    }
+
+    private static void drawMergedFace(MatrixStack matrices, VertexConsumer lines, FacePlane plane,
+                                       int a, int b, int width, int height, int color) {
+        switch (plane.direction) {
+            case DOWN, UP -> drawRect(matrices, lines, a, plane.plane, b, a + width, plane.plane, b + height, color);
+            case NORTH, SOUTH -> drawRect(matrices, lines, a, b, plane.plane, a + width, b + height, plane.plane, color);
+            case WEST, EAST -> drawRect(matrices, lines, plane.plane, b, a, plane.plane, b + height, a + width, color);
+        }
+    }
+
+    private static void drawMergedFilledFace(MatrixStack matrices, VertexConsumer filled, FacePlane plane,
+                                             int a, int b, int width, int height, int color, int alpha) {
+        switch (plane.direction) {
+            case DOWN -> drawQuad(filled, matrices, a, plane.plane, b, a, plane.plane, b + height,
+                    a + width, plane.plane, b + height, a + width, plane.plane, b, color, alpha);
+            case UP -> drawQuad(filled, matrices, a, plane.plane, b, a + width, plane.plane, b,
+                    a + width, plane.plane, b + height, a, plane.plane, b + height, color, alpha);
+            case NORTH -> drawQuad(filled, matrices, a, b, plane.plane, a + width, b, plane.plane,
+                    a + width, b + height, plane.plane, a, b + height, plane.plane, color, alpha);
+            case SOUTH -> drawQuad(filled, matrices, a, b, plane.plane, a, b + height, plane.plane,
+                    a + width, b + height, plane.plane, a + width, b, plane.plane, color, alpha);
+            case WEST -> drawQuad(filled, matrices, plane.plane, b, a, plane.plane, b + height, a,
+                    plane.plane, b + height, a + width, plane.plane, b, a + width, color, alpha);
+            case EAST -> drawQuad(filled, matrices, plane.plane, b, a, plane.plane, b, a + width,
+                    plane.plane, b + height, a + width, plane.plane, b + height, a, color, alpha);
+        }
+    }
+
+    private static double nearestDistanceSquared(Set<BlockPos> positions, Vec3d playerPos) {
+        double nearest = Double.MAX_VALUE;
+        for (BlockPos pos : positions) {
+            double dx = pos.getX() + 0.5 - playerPos.x;
+            double dy = pos.getY() + 0.5 - playerPos.y;
+            double dz = pos.getZ() + 0.5 - playerPos.z;
+            nearest = Math.min(nearest, dx * dx + dy * dy + dz * dz);
+        }
+        return nearest;
     }
 
     private static void drawFace(MatrixStack matrices, VertexConsumer lines, BlockPos pos, Direction direction, int color) {
@@ -298,6 +412,18 @@ public final class BlockOutlineRenderer {
     private record ClusterStyle(int color, boolean throughWalls, boolean filled, int alpha) {
     }
 
-    private record Cluster(Set<BlockPos> positions, int color, boolean throughWalls, boolean filled, int alpha) {
+    private static final class ClusterGroup {
+        private final Set<BlockPos> positions = new HashSet<>();
+        private int maxClusters = Integer.MAX_VALUE;
+    }
+
+    private record FacePlane(Direction direction, int plane) {
+    }
+
+    private record GridCell(int a, int b) {
+    }
+
+    private record Cluster(Set<BlockPos> positions, int color, boolean throughWalls, boolean filled, int alpha,
+                           ClusterStyle style, int maxClusters, double nearestDistanceSquared) {
     }
 }

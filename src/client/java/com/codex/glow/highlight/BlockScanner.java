@@ -15,8 +15,10 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class BlockScanner {
     private static final int SECTION_HEIGHT = 16;
@@ -103,9 +105,9 @@ public final class BlockScanner {
 
     public void requestPriorityRescan() {
         requestRescan();
-        immediateScanPending = true;
-        prioritySectionsRemaining = config.fastScanOnToggle ? 256 : 0;
-        statusText = config.fastScanOnToggle ? "Scanning nearby..." : "Scanning wider area...";
+        immediateScanPending = Boolean.TRUE.equals(config.fastScanOnToggle);
+        prioritySectionsRemaining = Boolean.TRUE.equals(config.fastScanOnToggle) ? 256 : 0;
+        statusText = Boolean.TRUE.equals(config.fastScanOnToggle) ? "Scanning nearby..." : "Scanning wider area...";
         statusHoldTicks = 0;
     }
 
@@ -236,7 +238,13 @@ public final class BlockScanner {
     private void runImmediateNearbyScan(ClientWorld world, ClientPlayerEntity player, int range) {
         ChunkPos center = player.getChunkPos();
         List<ScanSection> immediateSections = new ArrayList<>();
-        addChunkSections(world, immediateSections, center, player.getBlockY(), true);
+        Set<ScanSection> queued = new HashSet<>();
+        int playerY = player.getBlockY();
+        int playerSectionY = sectionStart(playerY);
+
+        addImmediateSection(world, immediateSections, queued, center, playerSectionY);
+        addBelowSections(world, immediateSections, queued, center, playerSectionY);
+        addChunkSections(world, immediateSections, queued, center, playerY, true);
 
         int chunkRadius = Math.max(1, Math.min(2, (int) Math.ceil(range / 16.0)));
         for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
@@ -244,7 +252,10 @@ public final class BlockScanner {
                 if (dx == 0 && dz == 0) {
                     continue;
                 }
-                addChunkSections(world, immediateSections, new ChunkPos(center.x + dx, center.z + dz), player.getBlockY(), false);
+                ChunkPos adjacent = new ChunkPos(center.x + dx, center.z + dz);
+                addImmediateSection(world, immediateSections, queued, adjacent, playerSectionY);
+                addBelowSections(world, immediateSections, queued, adjacent, playerSectionY);
+                addChunkSections(world, immediateSections, queued, adjacent, playerY, false);
             }
         }
 
@@ -255,7 +266,7 @@ public final class BlockScanner {
                 break;
             }
             scanSection(world, player, section, range);
-            scanQueue.removeIf(queued -> queued.matches(section.key()));
+            scanQueue.removeIf(existing -> existing.matches(section.key()));
             scannedBlocks += SECTION_HEIGHT * 16 * 16;
             scannedSections++;
         }
@@ -268,6 +279,10 @@ public final class BlockScanner {
     }
 
     private static void addChunkSections(ClientWorld world, List<ScanSection> target, ChunkPos chunkPos, int playerY, boolean belowFirst) {
+        addChunkSections(world, target, null, chunkPos, playerY, belowFirst);
+    }
+
+    private static void addChunkSections(ClientWorld world, List<ScanSection> target, Set<ScanSection> dedupe, ChunkPos chunkPos, int playerY, boolean belowFirst) {
         int minY = Math.floorDiv(world.getBottomY(), SECTION_HEIGHT) * SECTION_HEIGHT;
         int maxY = world.getTopY();
         List<Integer> starts = new ArrayList<>();
@@ -276,7 +291,28 @@ public final class BlockScanner {
         }
         starts.stream()
                 .sorted((left, right) -> compareSectionPriority(left, right, playerY, belowFirst))
-                .forEach(y -> target.add(new ScanSection(chunkPos.x, chunkPos.z, y)));
+                .forEach(y -> addImmediateSection(world, target, dedupe, chunkPos, y));
+    }
+
+    private static void addBelowSections(ClientWorld world, List<ScanSection> target, Set<ScanSection> dedupe, ChunkPos chunkPos, int playerSectionY) {
+        int minY = Math.floorDiv(world.getBottomY(), SECTION_HEIGHT) * SECTION_HEIGHT;
+        for (int y = playerSectionY - SECTION_HEIGHT; y >= minY; y -= SECTION_HEIGHT) {
+            addImmediateSection(world, target, dedupe, chunkPos, y);
+        }
+    }
+
+    private static void addImmediateSection(ClientWorld world, List<ScanSection> target, Set<ScanSection> dedupe, ChunkPos chunkPos, int sectionY) {
+        if (world.getChunk(chunkPos.x, chunkPos.z, ChunkStatus.FULL, false) == null) {
+            return;
+        }
+        ScanSection section = new ScanSection(chunkPos.x, chunkPos.z, sectionY);
+        if (dedupe == null || dedupe.add(section)) {
+            target.add(section);
+        }
+    }
+
+    private static int sectionStart(int y) {
+        return Math.floorDiv(y, SECTION_HEIGHT) * SECTION_HEIGHT;
     }
 
     private static int compareSectionPriority(int left, int right, int playerY, boolean belowFirst) {

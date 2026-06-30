@@ -2,6 +2,15 @@
 
 A Fabric Minecraft 1.21.1-only client-side mod that highlights selected entities and loaded blocks the client already knows about.
 
+## Downloads
+
+Pick the jar for the branch you want:
+
+| Branch | Flag | Latest jar |
+| --- | --- | --- |
+| `main` | Stable | [Download general-highlighter-main-1.0.0.jar](https://github.com/volcanorc/General-Highlighter/releases/download/latest-main/general-highlighter-main-1.0.0.jar) |
+| `smarthighlight` | Smart Highlight | [Download general-highlighter-smarthighlight-1.0.0.jar](https://github.com/volcanorc/General-Highlighter/releases/download/latest-smarthighlight/general-highlighter-smarthighlight-1.0.0.jar) |
+
 ## Behavior
 
 - Press `H` to open the highlighter menu.

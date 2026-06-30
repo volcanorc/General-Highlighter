@@ -1,0 +1,70 @@
+name: Branch Downloads
+
+on:
+  push:
+    branches:
+      - main
+      - smarthighlight
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build latest branch jar
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build --no-daemon
+
+      - name: Prepare branch artifact
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep '^mod_version=' gradle.properties | cut -d= -f2)"
+          BRANCH="${GITHUB_REF_NAME}"
+          SOURCE="build/libs/general-highlighter-${VERSION}.jar"
+          ASSET="general-highlighter-${BRANCH}-${VERSION}.jar"
+          cp "${SOURCE}" "build/libs/${ASSET}"
+          echo "tag=latest-${BRANCH}" >> "${GITHUB_OUTPUT}"
+          echo "asset=build/libs/${ASSET}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish latest branch release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.artifact.outputs.tag }}
+          ASSET: ${{ steps.artifact.outputs.asset }}
+          BRANCH: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${TAG}" --force
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" \
+              --title "Latest ${BRANCH}" \
+              --notes "Latest downloadable General Highlighter jar built from ${BRANCH}."
+            gh release upload "${TAG}" "${ASSET}" --clobber
+          else
+            gh release create "${TAG}" "${ASSET}" \
+              --target "${BRANCH}" \
+              --title "Latest ${BRANCH}" \
+              --notes "Latest downloadable General Highlighter jar built from ${BRANCH}."
+          fi

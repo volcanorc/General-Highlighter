@@ -25,9 +25,12 @@ import java.util.Set;
 public final class HighlighterScreen extends Screen {
     private static final int ROW_HEIGHT = 18;
     private static final int LIST_TOP = 76;
+    private static final int CONTROLS_TOP = 58;
+    private static final int CONTROLS_WIDTH = 140;
     private static final Identifier ALL_DROPPED_ITEMS = Identifier.of("minecraft", "item");
     private static final Map<Tab, Identifier> REMEMBERED_SELECTED = new EnumMap<>(Tab.class);
     private static final Map<Tab, Integer> REMEMBERED_SCROLL = new EnumMap<>(Tab.class);
+    private static final Map<Tab, Integer> REMEMBERED_CONTROLS_SCROLL = new EnumMap<>(Tab.class);
     private static Tab rememberedTab = Tab.ENTITIES;
     private static String rememberedSearch = "";
     private static final Set<String> NOISY_BLOCKS = Set.of(
@@ -50,6 +53,8 @@ public final class HighlighterScreen extends Screen {
     private TextFieldWidget colorField;
     private TextFieldWidget rangeField;
     private TextFieldWidget maxHighlightsField;
+    private TextFieldWidget maxClustersField;
+    private TextFieldWidget fillAlphaField;
     private ButtonWidget toggleButton;
     private ButtonWidget wallsButton;
     private ButtonWidget modeButton;
@@ -62,6 +67,7 @@ public final class HighlighterScreen extends Screen {
     private boolean syncingSearch;
     private Identifier selectedId = Identifier.of("minecraft", "zombie");
     private int scroll;
+    private int controlsScroll;
 
     public HighlighterScreen(Text title, HighlightConfig config, BlockScanner scanner) {
         super(title);
@@ -70,6 +76,7 @@ public final class HighlighterScreen extends Screen {
         this.tab = rememberedTab;
         this.selectedId = rememberedSelectedId(tab);
         this.scroll = REMEMBERED_SCROLL.getOrDefault(tab, 0);
+        this.controlsScroll = REMEMBERED_CONTROLS_SCROLL.getOrDefault(tab, 0);
     }
 
     @Override
@@ -120,9 +127,9 @@ public final class HighlighterScreen extends Screen {
             config.markDirty();
             rememberCurrentState();
             refreshEditor();
-        }).dimensions(sideX, 58, 140, 20).build());
+        }).dimensions(sideX, 58, CONTROLS_WIDTH, 20).build());
 
-        colorField = new TextFieldWidget(textRenderer, sideX, 102, 140, 18, Text.literal("Color"));
+        colorField = new TextFieldWidget(textRenderer, sideX, 102, CONTROLS_WIDTH, 18, Text.literal("Color"));
         colorField.setMaxLength(7);
         colorField.setChangedListener(value -> {
             if (syncingEditor) {
@@ -145,7 +152,7 @@ public final class HighlighterScreen extends Screen {
         });
         addDrawableChild(colorField);
 
-        rangeField = new TextFieldWidget(textRenderer, sideX, 144, 140, 18, Text.literal("Range"));
+        rangeField = new TextFieldWidget(textRenderer, sideX, 144, CONTROLS_WIDTH, 18, Text.literal("Range"));
         rangeField.setMaxLength(3);
         rangeField.setChangedListener(value -> {
             if (syncingEditor) {
@@ -189,7 +196,7 @@ public final class HighlighterScreen extends Screen {
             }
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 214, 140, 20).build());
+        }).dimensions(sideX, 214, CONTROLS_WIDTH, 20).build());
 
         modeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mode"), button -> {
             BlockRule rule = config.ensureBlockRule(selectedId);
@@ -197,43 +204,43 @@ public final class HighlighterScreen extends Screen {
             scanner.requestPriorityRescan();
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 240, 140, 20).build());
+        }).dimensions(sideX, 240, CONTROLS_WIDTH, 20).build());
 
         showNoisyBlocksButton = addDrawableChild(ButtonWidget.builder(Text.literal("Show noisy blocks"), button -> {
             config.showNoisyBlocks = !config.showNoisyBlocks;
             scroll = 0;
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 266, 140, 20).build());
+        }).dimensions(sideX, 266, CONTROLS_WIDTH, 20).build());
 
         loadedChunkRangeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Loaded range"), button -> {
             config.useLoadedChunkRange = !config.useLoadedChunkRange;
             scanner.requestPriorityRescan();
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 292, 140, 20).build());
+        }).dimensions(sideX, 292, CONTROLS_WIDTH, 20).build());
 
         fastScanButton = addDrawableChild(ButtonWidget.builder(Text.literal("Fast scan"), button -> {
             config.fastScanOnToggle = !config.fastScanOnToggle;
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 318, 140, 20).build());
+        }).dimensions(sideX, 318, CONTROLS_WIDTH, 20).build());
 
         allDroppedItemsButton = addDrawableChild(ButtonWidget.builder(Text.literal("All dropped"), button -> {
             config.allDroppedItems.enabled = !config.allDroppedItems.enabled;
             config.allDroppedItems.autoColor = true;
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 240, 140, 20).build());
+        }).dimensions(sideX, 240, CONTROLS_WIDTH, 20).build());
 
         itemAutoColorButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto color"), button -> {
             ItemRule rule = config.ensureItemRule(selectedId);
             rule.autoColor = !rule.autoColor;
             config.markDirty();
             refreshEditor();
-        }).dimensions(sideX, 266, 140, 20).build());
+        }).dimensions(sideX, 266, CONTROLS_WIDTH, 20).build());
 
-        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 402, 140, 18, Text.literal("Max highlights"));
+        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 402, CONTROLS_WIDTH, 18, Text.literal("Max highlights"));
         maxHighlightsField.setMaxLength(5);
         maxHighlightsField.setChangedListener(value -> {
             if (syncingEditor || tab != Tab.BLOCKS) {
@@ -249,29 +256,47 @@ public final class HighlighterScreen extends Screen {
         });
         addDrawableChild(maxHighlightsField);
 
+        maxClustersField = new TextFieldWidget(textRenderer, sideX, 440, CONTROLS_WIDTH, 18, Text.literal("Max clusters"));
+        maxClustersField.setMaxLength(5);
+        maxClustersField.setChangedListener(value -> {
+            if (syncingEditor || tab != Tab.BLOCKS) {
+                return;
+            }
+            try {
+                BlockRule rule = config.ensureBlockRule(selectedId);
+                rule.maxClusters = HighlightConfig.clamp(Integer.parseInt(value), 1, 5000);
+                config.markDirty();
+            } catch (NumberFormatException ignored) {
+            }
+        });
+        addDrawableChild(maxClustersField);
+
+        fillAlphaField = new TextFieldWidget(textRenderer, sideX, 478, CONTROLS_WIDTH, 18, Text.literal("Glow opacity"));
+        fillAlphaField.setMaxLength(3);
+        fillAlphaField.setChangedListener(value -> {
+            if (syncingEditor || tab != Tab.BLOCKS) {
+                return;
+            }
+            try {
+                BlockRule rule = config.ensureBlockRule(selectedId);
+                rule.fillAlpha = HighlightConfig.clamp(Integer.parseInt(value), 16, 180);
+                config.markDirty();
+            } catch (NumberFormatException ignored) {
+            }
+        });
+        addDrawableChild(fillAlphaField);
+
         refreshEditor();
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         renderBackground(context, mouseX, mouseY, delta);
+        layoutControls();
         super.render(context, mouseX, mouseY, delta);
 
         context.drawTextWithShadow(textRenderer, title, 12, 10, 0xFFFFFF);
-        context.drawTextWithShadow(textRenderer, "Selected", width - 152, 38, 0xCFCFCF);
-        context.drawTextWithShadow(textRenderer, selectedId.toString(), width - 152, 82, 0xFFFFFF);
-        context.drawTextWithShadow(textRenderer, "Color", width - 152, 92, 0xCFCFCF);
-        context.drawTextWithShadow(textRenderer, "Range", width - 152, 134, 0xCFCFCF);
-        context.drawTextWithShadow(textRenderer, "Presets", width - 152, 156, 0xCFCFCF);
-        if (tab == Tab.BLOCKS) {
-            context.drawTextWithShadow(textRenderer, "Block options", width - 152, 258, 0xCFCFCF);
-            context.drawTextWithShadow(textRenderer, scanner.getStatusText(), width - 152, 342, 0x9BE7FF);
-            context.drawTextWithShadow(textRenderer, "Matches: " + scanner.getCachedMatchCount(), width - 152, 352, 0xCFCFCF);
-            context.drawTextWithShadow(textRenderer, "Queued: " + scanner.getQueuedSectionCount(), width - 152, 362, 0xCFCFCF);
-            context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 392, 0xCFCFCF);
-        } else if (tab == Tab.ITEMS) {
-            context.drawTextWithShadow(textRenderer, "Dropped item stacks", width - 152, 232, 0xCFCFCF);
-        }
+        renderControlLabels(context);
 
         List<Identifier> visible = visibleIds();
         int listBottom = height - 18;
@@ -290,6 +315,38 @@ public final class HighlighterScreen extends Screen {
             context.fill(16, y + 4, 26, y + 14, enabled ? 0xFF4DFF7D : 0xFF555555);
             context.drawTextWithShadow(textRenderer, HighlightConfig.displayName(id), 32, y + 5, enabled ? 0xFFFFFF : 0xBBBBBB);
             context.drawTextWithShadow(textRenderer, id.toString(), Math.min(width - 334, 168), y + 5, 0x777777);
+        }
+    }
+
+    private void renderControlLabels(DrawContext context) {
+        int sideX = width - 152;
+        int panelBottom = controlsBottom();
+        context.drawTextWithShadow(textRenderer, "Selected", sideX, 38, 0xCFCFCF);
+        context.enableScissor(sideX - 2, CONTROLS_TOP, width - 8, panelBottom);
+        drawControlLabel(context, selectedId.toString(), 82, 0xFFFFFF);
+        drawControlLabel(context, "Color", 92, 0xCFCFCF);
+        drawControlLabel(context, "Range", 134, 0xCFCFCF);
+        drawControlLabel(context, "Presets", 156, 0xCFCFCF);
+        if (tab == Tab.BLOCKS) {
+            drawControlLabel(context, "Block options", 258, 0xCFCFCF);
+            drawControlLabel(context, scanner.getStatusText(), 342, 0x9BE7FF);
+            drawControlLabel(context, "Matches: " + scanner.getCachedMatchCount(), 352, 0xCFCFCF);
+            drawControlLabel(context, "Queued: " + scanner.getQueuedSectionCount(), 362, 0xCFCFCF);
+            drawControlLabel(context, "Max highlights", 392, 0xCFCFCF);
+            drawControlLabel(context, "Max clusters", 430, 0xCFCFCF);
+            if (isFilledMode()) {
+                drawControlLabel(context, "Glow opacity", 468, 0xCFCFCF);
+            }
+        } else if (tab == Tab.ITEMS) {
+            drawControlLabel(context, "Dropped item stacks", 232, 0xCFCFCF);
+        }
+        context.disableScissor();
+    }
+
+    private void drawControlLabel(DrawContext context, String text, int virtualY, int color) {
+        int y = controlY(virtualY);
+        if (y >= CONTROLS_TOP && y <= controlsBottom() - 8) {
+            context.drawTextWithShadow(textRenderer, text, width - 152, y, color);
         }
     }
 
@@ -330,13 +387,25 @@ public final class HighlighterScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        List<Identifier> visible = visibleIds();
-        int listBottom = height - 18;
-        int rows = Math.max(1, (listBottom - LIST_TOP) / ROW_HEIGHT);
-        int maxScroll = Math.max(0, visible.size() - rows);
-        scroll = HighlightConfig.clamp(scroll - (int) Math.signum(verticalAmount), 0, maxScroll);
-        rememberCurrentState();
-        return true;
+        if (isOverControls(mouseX, mouseY)) {
+            int maxScroll = maxControlsScroll();
+            controlsScroll = HighlightConfig.clamp(controlsScroll - (int) Math.signum(verticalAmount) * ROW_HEIGHT, 0, maxScroll);
+            rememberCurrentState();
+            layoutControls();
+            return true;
+        }
+
+        if (isOverList(mouseX, mouseY)) {
+            List<Identifier> visible = visibleIds();
+            int listBottom = height - 18;
+            int rows = Math.max(1, (listBottom - LIST_TOP) / ROW_HEIGHT);
+            int maxScroll = Math.max(0, visible.size() - rows);
+            scroll = HighlightConfig.clamp(scroll - (int) Math.signum(verticalAmount), 0, maxScroll);
+            rememberCurrentState();
+            return true;
+        }
+
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     @Override
@@ -402,6 +471,8 @@ public final class HighlighterScreen extends Screen {
             allDroppedItemsButton.visible = false;
             itemAutoColorButton.visible = false;
             maxHighlightsField.visible = false;
+            maxClustersField.visible = false;
+            fillAlphaField.visible = false;
         } else if (tab == Tab.BLOCKS) {
             BlockRule rule = config.blocks.get(selectedId.toString());
             boolean enabled = rule != null && rule.enabled;
@@ -410,6 +481,8 @@ public final class HighlighterScreen extends Screen {
             boolean throughWalls = rule == null || rule.throughWalls;
             String mode = rule == null ? BlockRenderMode.BOX.displayName() : rule.mode.displayName();
             int maxHighlights = rule == null ? 2048 : rule.maxHighlights;
+            int maxClusters = rule == null ? 512 : rule.maxClusters;
+            int fillAlpha = rule == null ? 72 : rule.fillAlpha;
             toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
             colorField.setText(color);
             rangeField.setText(Integer.toString(range));
@@ -426,6 +499,10 @@ public final class HighlighterScreen extends Screen {
             itemAutoColorButton.visible = false;
             maxHighlightsField.setText(Integer.toString(maxHighlights));
             maxHighlightsField.visible = true;
+            maxClustersField.setText(Integer.toString(maxClusters));
+            maxClustersField.visible = true;
+            fillAlphaField.setText(Integer.toString(fillAlpha));
+            fillAlphaField.visible = isFilledMode();
         } else {
             ItemRule rule = config.items.get(selectedId.toString());
             boolean enabled = rule != null && rule.enabled;
@@ -446,8 +523,11 @@ public final class HighlighterScreen extends Screen {
             itemAutoColorButton.setMessage(Text.literal(autoColor ? "Auto color: On" : "Auto color: Off"));
             itemAutoColorButton.visible = true;
             maxHighlightsField.visible = false;
+            maxClustersField.visible = false;
+            fillAlphaField.visible = false;
         }
         syncingEditor = false;
+        layoutControls();
     }
 
     private void applyColor(String color) {
@@ -472,12 +552,14 @@ public final class HighlighterScreen extends Screen {
         rememberedTab = nextTab;
         selectedId = rememberedSelectedId(nextTab);
         scroll = REMEMBERED_SCROLL.getOrDefault(nextTab, 0);
+        controlsScroll = REMEMBERED_CONTROLS_SCROLL.getOrDefault(nextTab, 0);
     }
 
     private void rememberCurrentState() {
         rememberedTab = tab;
         REMEMBERED_SELECTED.put(tab, selectedId);
         REMEMBERED_SCROLL.put(tab, scroll);
+        REMEMBERED_CONTROLS_SCROLL.put(tab, controlsScroll);
         if (searchField != null) {
             rememberedSearch = searchField.getText();
         }
@@ -494,6 +576,73 @@ public final class HighlighterScreen extends Screen {
     private void clampScroll(List<Identifier> visible, int rows) {
         int maxScroll = Math.max(0, visible.size() - rows);
         scroll = HighlightConfig.clamp(scroll, 0, maxScroll);
+    }
+
+    private void layoutControls() {
+        controlsScroll = HighlightConfig.clamp(controlsScroll, 0, maxControlsScroll());
+        placeControl(toggleButton, 58, true);
+        placeControl(colorField, 102, true);
+        placeControl(rangeField, 144, true);
+        placeControl(wallsButton, 214, true);
+        placeControl(modeButton, 240, tab == Tab.BLOCKS);
+        placeControl(showNoisyBlocksButton, 266, tab == Tab.BLOCKS);
+        placeControl(loadedChunkRangeButton, 292, tab == Tab.BLOCKS);
+        placeControl(fastScanButton, 318, tab == Tab.BLOCKS);
+        placeControl(allDroppedItemsButton, 240, tab == Tab.ITEMS);
+        placeControl(itemAutoColorButton, 266, tab == Tab.ITEMS);
+        placeControl(maxHighlightsField, 402, tab == Tab.BLOCKS);
+        placeControl(maxClustersField, 440, tab == Tab.BLOCKS);
+        placeControl(fillAlphaField, 478, tab == Tab.BLOCKS && isFilledMode());
+    }
+
+    private void placeControl(net.minecraft.client.gui.widget.ClickableWidget widget, int virtualY, boolean baseVisible) {
+        if (widget == null) {
+            return;
+        }
+        int y = controlY(virtualY);
+        widget.setY(y);
+        widget.visible = baseVisible && y + widget.getHeight() >= CONTROLS_TOP && y <= controlsBottom();
+    }
+
+    private int controlY(int virtualY) {
+        return virtualY - controlsScroll;
+    }
+
+    private int controlsBottom() {
+        return height - 18;
+    }
+
+    private int maxControlsScroll() {
+        return Math.max(0, controlsContentHeight() - (controlsBottom() - CONTROLS_TOP));
+    }
+
+    private int controlsContentHeight() {
+        if (tab == Tab.BLOCKS) {
+            return isFilledMode() ? 504 : 466;
+        }
+        if (tab == Tab.ITEMS) {
+            return 292;
+        }
+        return 236;
+    }
+
+    private boolean isFilledMode() {
+        if (tab != Tab.BLOCKS) {
+            return false;
+        }
+        BlockRule rule = config.blocks.get(selectedId.toString());
+        BlockRenderMode mode = rule == null ? BlockRenderMode.BOX : rule.mode;
+        return mode == BlockRenderMode.FILLED || mode == BlockRenderMode.FILLED_CLUSTER;
+    }
+
+    private boolean isOverControls(double mouseX, double mouseY) {
+        int sideX = width - 152;
+        return mouseX >= sideX && mouseX <= sideX + CONTROLS_WIDTH && mouseY >= CONTROLS_TOP && mouseY <= controlsBottom();
+    }
+
+    private boolean isOverList(double mouseX, double mouseY) {
+        int listWidth = Math.max(120, width - 184);
+        return mouseX >= 12 && mouseX <= 12 + listWidth && mouseY >= LIST_TOP && mouseY <= height - 18;
     }
 
     private enum Tab {
