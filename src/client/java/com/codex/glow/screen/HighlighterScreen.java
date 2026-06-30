@@ -1,6 +1,7 @@
 package com.codex.glow.screen;
 
 import com.codex.glow.config.BlockRule;
+import com.codex.glow.config.BlockRenderMode;
 import com.codex.glow.config.EntityRule;
 import com.codex.glow.config.HighlightConfig;
 import com.codex.glow.config.ItemRule;
@@ -54,6 +55,7 @@ public final class HighlighterScreen extends Screen {
     private ButtonWidget modeButton;
     private ButtonWidget showNoisyBlocksButton;
     private ButtonWidget loadedChunkRangeButton;
+    private ButtonWidget fastScanButton;
     private ButtonWidget allDroppedItemsButton;
     private ButtonWidget itemAutoColorButton;
     private boolean syncingEditor;
@@ -211,6 +213,12 @@ public final class HighlighterScreen extends Screen {
             refreshEditor();
         }).dimensions(sideX, 292, 140, 20).build());
 
+        fastScanButton = addDrawableChild(ButtonWidget.builder(Text.literal("Fast scan"), button -> {
+            config.fastScanOnToggle = !config.fastScanOnToggle;
+            config.markDirty();
+            refreshEditor();
+        }).dimensions(sideX, 318, 140, 20).build());
+
         allDroppedItemsButton = addDrawableChild(ButtonWidget.builder(Text.literal("All dropped"), button -> {
             config.allDroppedItems.enabled = !config.allDroppedItems.enabled;
             config.allDroppedItems.autoColor = true;
@@ -225,7 +233,7 @@ public final class HighlighterScreen extends Screen {
             refreshEditor();
         }).dimensions(sideX, 266, 140, 20).build());
 
-        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 326, 140, 18, Text.literal("Max highlights"));
+        maxHighlightsField = new TextFieldWidget(textRenderer, sideX, 402, 140, 18, Text.literal("Max highlights"));
         maxHighlightsField.setMaxLength(5);
         maxHighlightsField.setChangedListener(value -> {
             if (syncingEditor || tab != Tab.BLOCKS) {
@@ -257,7 +265,10 @@ public final class HighlighterScreen extends Screen {
         context.drawTextWithShadow(textRenderer, "Presets", width - 152, 156, 0xCFCFCF);
         if (tab == Tab.BLOCKS) {
             context.drawTextWithShadow(textRenderer, "Block options", width - 152, 258, 0xCFCFCF);
-            context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 316, 0xCFCFCF);
+            context.drawTextWithShadow(textRenderer, scanner.getStatusText(), width - 152, 342, 0x9BE7FF);
+            context.drawTextWithShadow(textRenderer, "Matches: " + scanner.getCachedMatchCount(), width - 152, 352, 0xCFCFCF);
+            context.drawTextWithShadow(textRenderer, "Queued: " + scanner.getQueuedSectionCount(), width - 152, 362, 0xCFCFCF);
+            context.drawTextWithShadow(textRenderer, "Max highlights", width - 152, 392, 0xCFCFCF);
         } else if (tab == Tab.ITEMS) {
             context.drawTextWithShadow(textRenderer, "Dropped item stacks", width - 152, 232, 0xCFCFCF);
         }
@@ -387,6 +398,7 @@ public final class HighlighterScreen extends Screen {
             modeButton.visible = false;
             showNoisyBlocksButton.visible = false;
             loadedChunkRangeButton.visible = false;
+            fastScanButton.visible = false;
             allDroppedItemsButton.visible = false;
             itemAutoColorButton.visible = false;
             maxHighlightsField.visible = false;
@@ -396,7 +408,7 @@ public final class HighlighterScreen extends Screen {
             String color = rule == null ? HighlightConfig.DEFAULT_BLOCK_COLOR : rule.color;
             int range = rule == null ? HighlightConfig.DEFAULT_RANGE : rule.range;
             boolean throughWalls = rule == null || rule.throughWalls;
-            String mode = rule == null ? "box" : rule.mode.name().toLowerCase(Locale.ROOT);
+            String mode = rule == null ? BlockRenderMode.BOX.displayName() : rule.mode.displayName();
             int maxHighlights = rule == null ? 2048 : rule.maxHighlights;
             toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
             colorField.setText(color);
@@ -408,6 +420,8 @@ public final class HighlighterScreen extends Screen {
             showNoisyBlocksButton.visible = true;
             loadedChunkRangeButton.setMessage(Text.literal(config.useLoadedChunkRange ? "Loaded chunks range: On" : "Loaded chunks range: Off"));
             loadedChunkRangeButton.visible = true;
+            fastScanButton.setMessage(Text.literal(config.fastScanOnToggle ? "Fast scan: On" : "Fast scan: Off"));
+            fastScanButton.visible = true;
             allDroppedItemsButton.visible = false;
             itemAutoColorButton.visible = false;
             maxHighlightsField.setText(Integer.toString(maxHighlights));
@@ -426,6 +440,7 @@ public final class HighlighterScreen extends Screen {
             modeButton.visible = false;
             showNoisyBlocksButton.visible = false;
             loadedChunkRangeButton.visible = false;
+            fastScanButton.visible = false;
             allDroppedItemsButton.setMessage(Text.literal(config.allDroppedItems.enabled ? "All dropped: On" : "All dropped: Off"));
             allDroppedItemsButton.visible = true;
             itemAutoColorButton.setMessage(Text.literal(autoColor ? "Auto color: On" : "Auto color: Off"));

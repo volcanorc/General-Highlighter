@@ -6,12 +6,10 @@ import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.ChunkStatus;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -23,6 +21,9 @@ import java.util.Map;
 public final class BlockScanner {
     private static final int SECTION_HEIGHT = 16;
     private static final int SECTIONS_PER_TICK = 4;
+    private static final int PRIORITY_SECTIONS_PER_TICK = 64;
+    private static final int IMMEDIATE_SECTION_LIMIT = 24;
+    private static final int IMMEDIATE_BLOCK_LIMIT = 65_536;
 
     private final HighlightConfig config;
     private final Map<SectionKey, List<BlockHighlight>> highlightsBySection = new HashMap<>();
@@ -31,6 +32,9 @@ public final class BlockScanner {
     private ChunkPos lastPlayerChunk;
     private int lastRange = -1;
     private int prioritySectionsRemaining;
+    private boolean immediateScanPending;
+    private String statusText = "Ready";
+    private int statusHoldTicks;
 
     public BlockScanner(HighlightConfig config) {
         this.config = config;
@@ -51,17 +55,32 @@ public final class BlockScanner {
 
         ChunkPos playerChunk = player.getChunkPos();
         int range = effectiveScanRange(client);
-        if (!playerChunk.equals(lastPlayerChunk) || range != lastRange || scanQueue.isEmpty()) {
+        if (!playerChunk.equals(lastPlayerChunk) || range != lastRange) {
             rebuildQueue(world, playerChunk, player.getBlockY(), range);
             pruneDistantSections(playerChunk, range);
         }
 
-        int budget = prioritySectionsRemaining > 0 ? Math.max(SECTIONS_PER_TICK, 64) : SECTIONS_PER_TICK;
+        if (immediateScanPending && config.fastScanOnToggle) {
+            runImmediateNearbyScan(world, player, range);
+            immediateScanPending = false;
+            statusText = "Immediate scan complete";
+            statusHoldTicks = 40;
+        }
+
+        int budget = prioritySectionsRemaining > 0 ? Math.max(SECTIONS_PER_TICK, PRIORITY_SECTIONS_PER_TICK) : SECTIONS_PER_TICK;
         for (int i = 0; i < budget && !scanQueue.isEmpty(); i++) {
             scanSection(world, player, scanQueue.poll(), range);
             if (prioritySectionsRemaining > 0) {
                 prioritySectionsRemaining--;
             }
+        }
+
+        if (statusHoldTicks > 0) {
+            statusHoldTicks--;
+        } else if (!scanQueue.isEmpty()) {
+            statusText = prioritySectionsRemaining > 0 ? "Scanning nearby..." : "Scanning wider area...";
+        } else {
+            statusText = "Ready";
         }
     }
 
@@ -71,6 +90,9 @@ public final class BlockScanner {
         lastPlayerChunk = null;
         lastRange = -1;
         prioritySectionsRemaining = 0;
+        immediateScanPending = false;
+        statusText = "Ready";
+        statusHoldTicks = 0;
     }
 
     public void requestRescan() {
@@ -81,7 +103,10 @@ public final class BlockScanner {
 
     public void requestPriorityRescan() {
         requestRescan();
-        prioritySectionsRemaining = 256;
+        immediateScanPending = true;
+        prioritySectionsRemaining = config.fastScanOnToggle ? 256 : 0;
+        statusText = config.fastScanOnToggle ? "Scanning nearby..." : "Scanning wider area...";
+        statusHoldTicks = 0;
     }
 
     public void onChunkLoaded(ClientWorld world, ChunkPos pos) {
@@ -105,6 +130,8 @@ public final class BlockScanner {
         highlightsBySection.remove(key);
         scanQueue.removeIf(queued -> queued.matches(key));
         scanQueue.addFirst(new ScanSection(chunkX, chunkZ, sectionY));
+        statusText = "Scanning nearby...";
+        statusHoldTicks = 0;
     }
 
     public List<BlockHighlight> getHighlights(ClientPlayerEntity player) {
@@ -171,8 +198,7 @@ public final class BlockScanner {
                 for (int x = 0; x < 16; x++) {
                     mutable.set((section.chunkX << 4) + x, y, (section.chunkZ << 4) + z);
                     BlockState state = chunk.getBlockState(mutable);
-                    Identifier id = Registries.BLOCK.getId(state.getBlock());
-                    BlockRule rule = config.getEnabledBlockRule(id);
+                    BlockRule rule = config.getEnabledBlockRule(state.getBlock());
                     if (rule == null) {
                         continue;
                     }
@@ -195,7 +221,53 @@ public final class BlockScanner {
         }
     }
 
+    public String getStatusText() {
+        return statusText;
+    }
+
+    public int getCachedMatchCount() {
+        return highlightsBySection.values().stream().mapToInt(List::size).sum();
+    }
+
+    public int getQueuedSectionCount() {
+        return scanQueue.size();
+    }
+
+    private void runImmediateNearbyScan(ClientWorld world, ClientPlayerEntity player, int range) {
+        ChunkPos center = player.getChunkPos();
+        List<ScanSection> immediateSections = new ArrayList<>();
+        addChunkSections(world, immediateSections, center, player.getBlockY(), true);
+
+        int chunkRadius = Math.max(1, Math.min(2, (int) Math.ceil(range / 16.0)));
+        for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
+            for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                addChunkSections(world, immediateSections, new ChunkPos(center.x + dx, center.z + dz), player.getBlockY(), false);
+            }
+        }
+
+        int scannedBlocks = 0;
+        int scannedSections = 0;
+        for (ScanSection section : immediateSections) {
+            if (scannedSections >= IMMEDIATE_SECTION_LIMIT || scannedBlocks >= IMMEDIATE_BLOCK_LIMIT) {
+                break;
+            }
+            scanSection(world, player, section, range);
+            scanQueue.removeIf(queued -> queued.matches(section.key()));
+            scannedBlocks += SECTION_HEIGHT * 16 * 16;
+            scannedSections++;
+        }
+    }
+
     private void enqueueChunkSections(ClientWorld world, ChunkPos chunkPos, int playerY) {
+        List<ScanSection> sections = new ArrayList<>();
+        addChunkSections(world, sections, chunkPos, playerY, false);
+        sections.forEach(scanQueue::add);
+    }
+
+    private static void addChunkSections(ClientWorld world, List<ScanSection> target, ChunkPos chunkPos, int playerY, boolean belowFirst) {
         int minY = Math.floorDiv(world.getBottomY(), SECTION_HEIGHT) * SECTION_HEIGHT;
         int maxY = world.getTopY();
         List<Integer> starts = new ArrayList<>();
@@ -203,8 +275,19 @@ public final class BlockScanner {
             starts.add(y);
         }
         starts.stream()
-                .sorted(Comparator.comparingInt(y -> Math.abs(y + SECTION_HEIGHT / 2 - playerY)))
-                .forEach(y -> scanQueue.add(new ScanSection(chunkPos.x, chunkPos.z, y)));
+                .sorted((left, right) -> compareSectionPriority(left, right, playerY, belowFirst))
+                .forEach(y -> target.add(new ScanSection(chunkPos.x, chunkPos.z, y)));
+    }
+
+    private static int compareSectionPriority(int left, int right, int playerY, boolean belowFirst) {
+        if (belowFirst) {
+            boolean leftBelow = left + SECTION_HEIGHT / 2 <= playerY;
+            boolean rightBelow = right + SECTION_HEIGHT / 2 <= playerY;
+            if (leftBelow != rightBelow) {
+                return leftBelow ? -1 : 1;
+            }
+        }
+        return Integer.compare(Math.abs(left + SECTION_HEIGHT / 2 - playerY), Math.abs(right + SECTION_HEIGHT / 2 - playerY));
     }
 
     private int effectiveScanRange(MinecraftClient client) {

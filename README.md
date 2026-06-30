@@ -13,10 +13,12 @@ A Fabric Minecraft 1.21.1-only client-side mod that highlights selected entities
 - Entity highlighting updates continuously, so newly tracked entities are included automatically.
 - Block highlighting scans loaded client chunks incrementally to avoid freezes.
 - Block scans are budgeted by vertical chunk section, so common blocks are less likely to stutter the client.
-- Enabling or changing a block rule triggers a priority nearby rescan so loaded matches appear quickly.
+- Enabling or changing a block rule triggers an immediate current-chunk scan, then a priority nearby rescan so loaded matches appear quickly.
 - Cluster mode draws exposed selected-block borders instead of one large bounding box around air.
+- Filled glow modes render translucent whole-block or whole-cluster surfaces without using resource pack reloads.
 - The Blocks tab can hide noisy blocks by default, or show them when you want to select things like stone, dirt, water, or lava.
 - The Blocks tab can use the current loaded/render-distance chunk range while still only reading chunks the client has already received.
+- The Blocks tab shows scan status, cached match count, queued scan sections, and a fast-scan toggle.
 - Client block updates invalidate nearby cached block highlights so placing or breaking selected blocks refreshes quickly.
 - The Items tab owns dropped item highlighting, including a general `All dropped` toggle and item-specific overrides.
 

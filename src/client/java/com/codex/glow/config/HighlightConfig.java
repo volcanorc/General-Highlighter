@@ -3,6 +3,7 @@ package com.codex.glow.config;
 import com.codex.glow.mixin.client.ItemRendererAccessor;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import net.minecraft.block.Block;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.color.item.ItemColors;
 import net.fabricmc.loader.api.FabricLoader;
@@ -17,6 +18,7 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -36,9 +38,12 @@ public final class HighlightConfig {
     public ItemRule allDroppedItems = new ItemRule();
     public boolean showNoisyBlocks = false;
     public boolean useLoadedChunkRange = false;
+    public Boolean fastScanOnToggle = true;
 
     private transient Path path;
     private transient boolean dirty;
+    private transient Map<Block, BlockRule> enabledBlockRules = new IdentityHashMap<>();
+    private transient boolean blockRuleCacheDirty = true;
 
     public static HighlightConfig load() {
         Path path = FabricLoader.getInstance().getConfigDir().resolve("general-highlighter.json");
@@ -81,6 +86,12 @@ public final class HighlightConfig {
             allDroppedItems = new ItemRule();
             dirty = true;
         }
+        if (fastScanOnToggle == null) {
+            fastScanOnToggle = true;
+            dirty = true;
+        }
+        enabledBlockRules = new IdentityHashMap<>();
+        blockRuleCacheDirty = true;
 
         entities.values().forEach(EntityRule::sanitize);
         blocks.values().forEach(BlockRule::sanitize);
@@ -202,6 +213,13 @@ public final class HighlightConfig {
         return rule;
     }
 
+    public BlockRule getEnabledBlockRule(Block block) {
+        if (blockRuleCacheDirty) {
+            rebuildEnabledBlockRuleCache();
+        }
+        return enabledBlockRules.get(block);
+    }
+
     public ItemRule getEnabledItemRule(ItemEntity entity) {
         Identifier itemId = Registries.ITEM.getId(entity.getStack().getItem());
         ItemRule rule = items.get(itemId.toString());
@@ -225,6 +243,7 @@ public final class HighlightConfig {
 
     public void markDirty() {
         dirty = true;
+        blockRuleCacheDirty = true;
     }
 
     public void saveIfDirty() {
@@ -269,6 +288,21 @@ public final class HighlightConfig {
             return id.toString();
         }
         return Character.toUpperCase(path.charAt(0)) + path.substring(1);
+    }
+
+    private void rebuildEnabledBlockRuleCache() {
+        enabledBlockRules.clear();
+        for (Map.Entry<String, BlockRule> entry : blocks.entrySet()) {
+            BlockRule rule = entry.getValue();
+            if (rule == null || !rule.enabled) {
+                continue;
+            }
+            Identifier id = Identifier.tryParse(entry.getKey());
+            if (id != null && Registries.BLOCK.containsId(id)) {
+                enabledBlockRules.put(Registries.BLOCK.get(id), rule);
+            }
+        }
+        blockRuleCacheDirty = false;
     }
 
     private static int getAutomaticItemColor(ItemStack stack) {

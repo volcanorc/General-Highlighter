@@ -7,6 +7,8 @@ public final class BlockRule {
     public BlockRenderMode mode = BlockRenderMode.BOX;
     public boolean throughWalls = true;
     public int maxHighlights = 2048;
+    public int maxClusters = 512;
+    public int fillAlpha = 72;
 
     public void sanitize() {
         color = HighlightConfig.sanitizeColor(color, HighlightConfig.DEFAULT_BLOCK_COLOR);
@@ -15,5 +17,7 @@ public final class BlockRule {
             mode = BlockRenderMode.BOX;
         }
         maxHighlights = HighlightConfig.clamp(maxHighlights, 1, 20000);
+        maxClusters = HighlightConfig.clamp(maxClusters, 1, 5000);
+        fillAlpha = HighlightConfig.clamp(fillAlpha, 16, 180);
     }
 }
