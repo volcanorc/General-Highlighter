@@ -6,15 +6,16 @@ import com.codex.glow.highlight.BlockScanner;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
+import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BufferRenderer;
+import net.minecraft.client.render.BuiltBuffer;
+import net.minecraft.client.render.GameRenderer;
+import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
-import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -27,125 +28,172 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.function.Consumer;
 
 public final class BlockOutlineRenderer {
     private static final int MIN_THROUGH_WALL_ALPHA = 220;
     private static final double THROUGH_WALL_EXPANSION = 0.035;
     private static final double VISIBLE_OVERLAY_EXPANSION = 0.012;
     private static final double VISIBLE_FILL_EXPANSION = 0.003;
-
-    private static final RenderLayer VISIBLE_FILLED = RenderLayer.of(
-            "general_highlighter_filled",
-            VertexFormats.POSITION_COLOR,
-            VertexFormat.DrawMode.QUADS,
-            1536,
-            false,
-            false,
-            RenderLayer.MultiPhaseParameters.builder()
-                    .program(RenderPhase.COLOR_PROGRAM)
-                    .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                    .depthTest(RenderPhase.LEQUAL_DEPTH_TEST)
-                    .cull(RenderPhase.DISABLE_CULLING)
-                    .writeMaskState(RenderPhase.COLOR_MASK)
-                    .build(false)
-    );
-    private static final RenderLayer THROUGH_WALL_FILLED = RenderLayer.of(
-            "general_highlighter_through_wall_filled",
-            VertexFormats.POSITION_COLOR,
-            VertexFormat.DrawMode.QUADS,
-            1536,
-            false,
-            false,
-            RenderLayer.MultiPhaseParameters.builder()
-                    .program(RenderPhase.COLOR_PROGRAM)
-                    .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                    .depthTest(RenderPhase.ALWAYS_DEPTH_TEST)
-                    .cull(RenderPhase.DISABLE_CULLING)
-                    .writeMaskState(RenderPhase.COLOR_MASK)
-                    .build(false)
-    );
-    private static final RenderLayer THROUGH_WALL_LINES = RenderLayer.of(
-            "general_highlighter_through_wall_lines",
-            VertexFormats.LINES,
-            VertexFormat.DrawMode.LINES,
-            1536,
-            false,
-            false,
-            RenderLayer.MultiPhaseParameters.builder()
-                    .program(RenderPhase.LINES_PROGRAM)
-                    .lineWidth(RenderPhase.FULL_LINE_WIDTH)
-                    .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                    .depthTest(RenderPhase.ALWAYS_DEPTH_TEST)
-                    .cull(RenderPhase.DISABLE_CULLING)
-                    .writeMaskState(RenderPhase.COLOR_MASK)
-                    .build(false)
-    );
+    private static final double MARKER_RADIUS = 0.22;
+    private static final double MARKER_TOP_OFFSET = 1.75;
 
     private BlockOutlineRenderer() {
     }
 
     public static void render(WorldRenderContext context, BlockScanner scanner) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player == null || client.world == null || context.consumers() == null) {
+        if (client.player == null || client.world == null) {
             return;
         }
 
         MatrixStack matrices = context.matrixStack();
         Vec3d camera = context.camera().getPos();
         List<BlockHighlight> highlights = scanner.getHighlights(client.player);
+        List<Cluster> clusters = buildClusters(highlights, client.player.getPos());
 
         matrices.push();
         matrices.translate(-camera.x, -camera.y, -camera.z);
 
-        for (BlockHighlight highlight : highlights) {
-            if (isClusterMode(highlight.rule().mode)) {
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
+        RenderSystem.depthMask(false);
+        RenderSystem.disableCull();
+
+        renderVisibleHighlights(matrices, highlights, clusters);
+        renderThroughWallHighlights(matrices, highlights, clusters);
+
+        RenderSystem.enableCull();
+        RenderSystem.depthMask(true);
+        RenderSystem.enableDepthTest();
+        RenderSystem.disableBlend();
+        matrices.pop();
+    }
+
+    private static void renderVisibleHighlights(MatrixStack matrices, List<BlockHighlight> highlights, List<Cluster> clusters) {
+        RenderSystem.enableDepthTest();
+
+        drawQuads(filled -> {
+            for (BlockHighlight highlight : highlights) {
+                if (highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)) {
+                    continue;
+                }
+
+                int color = highlight.color();
+                if (highlight.rule().mode == BlockRenderMode.OVERLAY) {
+                    drawFilledBlock(matrices, filled, highlight.pos(), color, Math.max(highlight.rule().fillAlpha, 160), VISIBLE_OVERLAY_EXPANSION);
+                } else if (highlight.rule().mode == BlockRenderMode.FILLED) {
+                    drawFilledBlock(matrices, filled, highlight.pos(), color, highlight.rule().fillAlpha, VISIBLE_FILL_EXPANSION);
+                }
+            }
+
+            for (Cluster cluster : limitedClusters(clusters, false)) {
+                if (!cluster.throughWalls && cluster.filled) {
+                    drawClusterFilledSurfaces(matrices, filled, cluster);
+                }
+            }
+        });
+
+        drawLines(lines -> {
+            for (BlockHighlight highlight : highlights) {
+                if (highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)
+                        || highlight.rule().mode == BlockRenderMode.OVERLAY || highlight.rule().mode == BlockRenderMode.FILLED) {
+                    continue;
+                }
+                drawOutline(matrices, lines, highlight.pos(), highlight.color(), 242);
+            }
+
+            for (Cluster cluster : limitedClusters(clusters, false)) {
+                if (!cluster.throughWalls && !cluster.filled) {
+                    drawClusterSurfaces(matrices, lines, cluster);
+                }
+            }
+        });
+    }
+
+    private static void renderThroughWallHighlights(MatrixStack matrices, List<BlockHighlight> highlights, List<Cluster> clusters) {
+        RenderSystem.disableDepthTest();
+        RenderSystem.lineWidth(2.0f);
+
+        drawQuads(filled -> {
+            for (BlockHighlight highlight : highlights) {
+                if (!highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)) {
+                    continue;
+                }
+                drawFilledBlock(matrices, filled, highlight.pos(), highlight.color(), throughWallAlpha(highlight.rule().fillAlpha), THROUGH_WALL_EXPANSION);
+            }
+
+            for (Cluster cluster : limitedClusters(clusters, true)) {
+                drawClusterFilledSurfaces(matrices, filled, cluster.withAlpha(throughWallAlpha(cluster.alpha)));
+            }
+        });
+
+        drawLines(lines -> {
+            for (BlockHighlight highlight : highlights) {
+                if (!highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)) {
+                    continue;
+                }
+                drawOutline(matrices, lines, highlight.pos(), highlight.color(), 255);
+                drawMarker(matrices, lines, highlight.pos(), highlight.color());
+            }
+
+            for (Cluster cluster : limitedClusters(clusters, true)) {
+                drawClusterSurfaces(matrices, lines, cluster);
+            }
+        });
+
+        RenderSystem.lineWidth(1.0f);
+    }
+
+    private static void drawQuads(Consumer<VertexConsumer> draw) {
+        drawImmediate(VertexFormat.DrawMode.QUADS, draw);
+    }
+
+    private static void drawLines(Consumer<VertexConsumer> draw) {
+        drawImmediate(VertexFormat.DrawMode.DEBUG_LINES, draw);
+    }
+
+    private static void drawImmediate(VertexFormat.DrawMode mode, Consumer<VertexConsumer> draw) {
+        BufferBuilder builder = Tessellator.getInstance().begin(mode, VertexFormats.POSITION_COLOR);
+        draw.accept(builder);
+        BuiltBuffer buffer = builder.endNullable();
+        if (buffer != null) {
+            BufferRenderer.drawWithGlobalProgram(buffer);
+        }
+    }
+
+    private static void drawMarker(MatrixStack matrices, VertexConsumer lines, BlockPos pos, int color) {
+        double x = pos.getX() + 0.5;
+        double y = pos.getY() + 0.5;
+        double z = pos.getZ() + 0.5;
+        double topY = pos.getY() + MARKER_TOP_OFFSET;
+
+        drawLine(matrices, lines, x, y, z, x, topY, z, color, 255);
+        drawLine(matrices, lines, x - MARKER_RADIUS, topY, z, x + MARKER_RADIUS, topY, z, color, 255);
+        drawLine(matrices, lines, x, topY, z - MARKER_RADIUS, x, topY, z + MARKER_RADIUS, color, 255);
+        drawLine(matrices, lines, x - MARKER_RADIUS, topY - MARKER_RADIUS, z, x + MARKER_RADIUS, topY + MARKER_RADIUS, z, color, 255);
+        drawLine(matrices, lines, x + MARKER_RADIUS, topY - MARKER_RADIUS, z, x - MARKER_RADIUS, topY + MARKER_RADIUS, z, color, 255);
+    }
+
+    private static List<Cluster> limitedClusters(List<Cluster> clusters, boolean throughWalls) {
+        List<Cluster> limited = new ArrayList<>();
+        Map<ClusterStyle, Integer> renderedClusterCounts = new HashMap<>();
+        for (Cluster cluster : clusters) {
+            if (cluster.throughWalls != throughWalls) {
                 continue;
             }
 
-            int color = highlight.color();
-            if (highlight.rule().throughWalls) {
-                VertexConsumer filled = context.consumers().getBuffer(THROUGH_WALL_FILLED);
-                drawFilledBlock(matrices, filled, highlight.pos(), color, throughWallAlpha(highlight.rule().fillAlpha), THROUGH_WALL_EXPANSION);
-
-                VertexConsumer lines = context.consumers().getBuffer(THROUGH_WALL_LINES);
-                drawOutline(matrices, lines, highlight.pos(), color, 1.0f);
-            } else if (highlight.rule().mode == BlockRenderMode.OVERLAY) {
-                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(highlight.rule().throughWalls));
-                drawFilledBlock(matrices, filled, highlight.pos(), color, Math.max(highlight.rule().fillAlpha, 160), VISIBLE_OVERLAY_EXPANSION);
-            } else if (highlight.rule().mode == BlockRenderMode.FILLED) {
-                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(highlight.rule().throughWalls));
-                drawFilledBlock(matrices, filled, highlight.pos(), color, highlight.rule().fillAlpha, VISIBLE_FILL_EXPANSION);
-            } else {
-                VertexConsumer lines = context.consumers().getBuffer(lineLayerFor(highlight.rule().throughWalls));
-                drawOutline(matrices, lines, highlight.pos(), color, 0.9f);
-            }
-        }
-
-        Map<ClusterStyle, Integer> renderedClusterCounts = new HashMap<>();
-        for (Cluster cluster : buildClusters(highlights, client.player.getPos())) {
             int renderedForStyle = renderedClusterCounts.getOrDefault(cluster.style, 0);
             if (renderedForStyle >= cluster.maxClusters) {
                 continue;
             }
+
             renderedClusterCounts.put(cluster.style, renderedForStyle + 1);
-
-            if (cluster.throughWalls) {
-                VertexConsumer filled = context.consumers().getBuffer(THROUGH_WALL_FILLED);
-                drawClusterFilledSurfaces(matrices, filled, cluster.withAlpha(throughWallAlpha(cluster.alpha)));
-
-                VertexConsumer lines = context.consumers().getBuffer(THROUGH_WALL_LINES);
-                drawClusterSurfaces(matrices, lines, cluster);
-            } else if (cluster.filled) {
-                VertexConsumer filled = context.consumers().getBuffer(filledLayerFor(false));
-                drawClusterFilledSurfaces(matrices, filled, cluster);
-            } else {
-                VertexConsumer lines = context.consumers().getBuffer(lineLayerFor(false));
-                drawClusterSurfaces(matrices, lines, cluster);
-            }
+            limited.add(cluster);
         }
-
-        RenderSystem.enableDepthTest();
-        matrices.pop();
+        return limited;
     }
 
     private static List<Cluster> buildClusters(List<BlockHighlight> highlights, Vec3d playerPos) {
@@ -203,24 +251,24 @@ public final class BlockOutlineRenderer {
         return mode == BlockRenderMode.CLUSTER || mode == BlockRenderMode.FILLED_CLUSTER;
     }
 
-    private static RenderLayer lineLayerFor(boolean throughWalls) {
-        return throughWalls ? THROUGH_WALL_LINES : RenderLayer.getLines();
-    }
-
-    private static RenderLayer filledLayerFor(boolean throughWalls) {
-        return throughWalls ? THROUGH_WALL_FILLED : VISIBLE_FILLED;
-    }
-
     private static int throughWallAlpha(int alpha) {
         return Math.max(alpha, MIN_THROUGH_WALL_ALPHA);
     }
 
-    private static void drawOutline(MatrixStack matrices, VertexConsumer lines, BlockPos pos, int color, float alpha) {
-        float red = ((color >> 16) & 0xFF) / 255.0f;
-        float green = ((color >> 8) & 0xFF) / 255.0f;
-        float blue = (color & 0xFF) / 255.0f;
-        Box box = new Box(pos).expand(0.01);
-        WorldRenderer.drawBox(matrices, lines, box, red, green, blue, alpha);
+    private static void drawOutline(MatrixStack matrices, VertexConsumer lines, BlockPos pos, int color, int alpha) {
+        double x1 = pos.getX() - 0.01;
+        double y1 = pos.getY() - 0.01;
+        double z1 = pos.getZ() - 0.01;
+        double x2 = pos.getX() + 1.01;
+        double y2 = pos.getY() + 1.01;
+        double z2 = pos.getZ() + 1.01;
+
+        drawRect(matrices, lines, x1, y1, z1, x2, y1, z2, color, alpha);
+        drawRect(matrices, lines, x1, y2, z1, x2, y2, z2, color, alpha);
+        drawLine(matrices, lines, x1, y1, z1, x1, y2, z1, color, alpha);
+        drawLine(matrices, lines, x2, y1, z1, x2, y2, z1, color, alpha);
+        drawLine(matrices, lines, x1, y1, z2, x1, y2, z2, color, alpha);
+        drawLine(matrices, lines, x2, y1, z2, x2, y2, z2, color, alpha);
     }
 
     private static void drawClusterSurfaces(MatrixStack matrices, VertexConsumer lines, Cluster cluster) {
@@ -391,21 +439,28 @@ public final class BlockOutlineRenderer {
                                  double ax, double ay, double az,
                                  double bx, double by, double bz,
                                  int color) {
+        drawRect(matrices, lines, ax, ay, az, bx, by, bz, color, 242);
+    }
+
+    private static void drawRect(MatrixStack matrices, VertexConsumer lines,
+                                 double ax, double ay, double az,
+                                 double bx, double by, double bz,
+                                 int color, int alpha) {
         if (ay == by) {
-            drawLine(matrices, lines, ax, ay, az, bx, by, az, color);
-            drawLine(matrices, lines, bx, by, az, bx, by, bz, color);
-            drawLine(matrices, lines, bx, by, bz, ax, ay, bz, color);
-            drawLine(matrices, lines, ax, ay, bz, ax, ay, az, color);
+            drawLine(matrices, lines, ax, ay, az, bx, by, az, color, alpha);
+            drawLine(matrices, lines, bx, by, az, bx, by, bz, color, alpha);
+            drawLine(matrices, lines, bx, by, bz, ax, ay, bz, color, alpha);
+            drawLine(matrices, lines, ax, ay, bz, ax, ay, az, color, alpha);
         } else if (az == bz) {
-            drawLine(matrices, lines, ax, ay, az, bx, ay, bz, color);
-            drawLine(matrices, lines, bx, ay, bz, bx, by, bz, color);
-            drawLine(matrices, lines, bx, by, bz, ax, by, az, color);
-            drawLine(matrices, lines, ax, by, az, ax, ay, az, color);
+            drawLine(matrices, lines, ax, ay, az, bx, ay, bz, color, alpha);
+            drawLine(matrices, lines, bx, ay, bz, bx, by, bz, color, alpha);
+            drawLine(matrices, lines, bx, by, bz, ax, by, az, color, alpha);
+            drawLine(matrices, lines, ax, by, az, ax, ay, az, color, alpha);
         } else {
-            drawLine(matrices, lines, ax, ay, az, ax, by, az, color);
-            drawLine(matrices, lines, ax, by, az, bx, by, bz, color);
-            drawLine(matrices, lines, bx, by, bz, bx, ay, bz, color);
-            drawLine(matrices, lines, bx, ay, bz, ax, ay, az, color);
+            drawLine(matrices, lines, ax, ay, az, ax, by, az, color, alpha);
+            drawLine(matrices, lines, ax, by, az, bx, by, bz, color, alpha);
+            drawLine(matrices, lines, bx, by, bz, bx, ay, bz, color, alpha);
+            drawLine(matrices, lines, bx, ay, bz, ax, ay, az, color, alpha);
         }
     }
 
@@ -413,12 +468,19 @@ public final class BlockOutlineRenderer {
                                  double x1, double y1, double z1,
                                  double x2, double y2, double z2,
                                  int color) {
+        drawLine(matrices, lines, x1, y1, z1, x2, y2, z2, color, 242);
+    }
+
+    private static void drawLine(MatrixStack matrices, VertexConsumer lines,
+                                 double x1, double y1, double z1,
+                                 double x2, double y2, double z2,
+                                 int color, int alpha) {
         MatrixStack.Entry entry = matrices.peek();
         int red = (color >> 16) & 0xFF;
         int green = (color >> 8) & 0xFF;
         int blue = color & 0xFF;
-        lines.vertex(entry, (float) x1, (float) y1, (float) z1).color(red, green, blue, 242).normal(entry, 0.0f, 1.0f, 0.0f);
-        lines.vertex(entry, (float) x2, (float) y2, (float) z2).color(red, green, blue, 242).normal(entry, 0.0f, 1.0f, 0.0f);
+        lines.vertex(entry, (float) x1, (float) y1, (float) z1).color(red, green, blue, alpha);
+        lines.vertex(entry, (float) x2, (float) y2, (float) z2).color(red, green, blue, alpha);
     }
 
     private static void drawQuad(VertexConsumer filled, MatrixStack matrices,
