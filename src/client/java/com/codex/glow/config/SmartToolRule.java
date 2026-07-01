@@ -59,6 +59,7 @@ public final class SmartToolRule {
         rule.color = blockColor;
         rule.range = range;
         rule.throughWalls = throughWalls;
+        rule.fillAlpha = 128;
         rule.sanitize();
         return rule;
     }

@@ -16,8 +16,10 @@ import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.shape.VoxelShape;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -31,7 +33,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 public final class BlockOutlineRenderer {
-    private static final int MIN_THROUGH_WALL_ALPHA = 220;
+    private static final int DEFAULT_FILLED_ALPHA = 128;
     private static final double THROUGH_WALL_EXPANSION = 0.035;
     private static final double VISIBLE_OVERLAY_EXPANSION = 0.012;
     private static final double VISIBLE_FILL_EXPANSION = 0.003;
@@ -83,9 +85,9 @@ public final class BlockOutlineRenderer {
 
                 int color = highlight.color();
                 if (highlight.rule().mode == BlockRenderMode.OVERLAY) {
-                    drawFilledBlock(matrices, filled, highlight.pos(), color, Math.max(highlight.rule().fillAlpha, 160), VISIBLE_OVERLAY_EXPANSION);
+                    drawFilledShape(matrices, filled, highlight, color, highlight.rule().fillAlpha, VISIBLE_OVERLAY_EXPANSION);
                 } else if (highlight.rule().mode == BlockRenderMode.FILLED) {
-                    drawFilledBlock(matrices, filled, highlight.pos(), color, highlight.rule().fillAlpha, VISIBLE_FILL_EXPANSION);
+                    drawFilledShape(matrices, filled, highlight, color, highlight.rule().fillAlpha, VISIBLE_FILL_EXPANSION);
                 }
             }
 
@@ -102,7 +104,7 @@ public final class BlockOutlineRenderer {
                         || highlight.rule().mode == BlockRenderMode.OVERLAY || highlight.rule().mode == BlockRenderMode.FILLED) {
                     continue;
                 }
-                drawOutline(matrices, lines, highlight.pos(), highlight.color(), 242);
+                drawShapeOutline(matrices, lines, highlight, highlight.color(), 242);
             }
 
             for (Cluster cluster : limitedClusters(clusters, false)) {
@@ -122,7 +124,7 @@ public final class BlockOutlineRenderer {
                 if (!highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)) {
                     continue;
                 }
-                drawFilledBlock(matrices, filled, highlight.pos(), highlight.color(), throughWallAlpha(highlight.rule().fillAlpha), THROUGH_WALL_EXPANSION);
+                drawFilledShape(matrices, filled, highlight, highlight.color(), throughWallAlpha(highlight.rule().fillAlpha), THROUGH_WALL_EXPANSION);
             }
 
             for (Cluster cluster : limitedClusters(clusters, true)) {
@@ -135,7 +137,7 @@ public final class BlockOutlineRenderer {
                 if (!highlight.rule().throughWalls || isClusterMode(highlight.rule().mode)) {
                     continue;
                 }
-                drawOutline(matrices, lines, highlight.pos(), highlight.color(), 255);
+                drawShapeOutline(matrices, lines, highlight, highlight.color(), 255);
                 drawMarker(matrices, lines, highlight.pos(), highlight.color());
             }
 
@@ -204,6 +206,7 @@ public final class BlockOutlineRenderer {
                 ClusterStyle style = new ClusterStyle(highlight.color(), highlight.rule().throughWalls, filled, highlight.rule().fillAlpha);
                 ClusterGroup group = grouped.computeIfAbsent(style, ignored -> new ClusterGroup());
                 group.positions.add(highlight.pos());
+                group.highlights.put(highlight.pos(), highlight);
                 group.maxClusters = Math.min(group.maxClusters, highlight.rule().maxClusters);
             }
         }
@@ -238,7 +241,10 @@ public final class BlockOutlineRenderer {
                 }
 
                 ClusterStyle style = group.getKey();
-                clusters.add(new Cluster(positions, style.color, style.throughWalls, style.filled, style.alpha, style, group.getValue().maxClusters,
+                List<BlockHighlight> clusterHighlights = positions.stream()
+                        .map(group.getValue().highlights::get)
+                        .toList();
+                clusters.add(new Cluster(positions, clusterHighlights, !hasOnlyFullBlockShapes(clusterHighlights), style.color, style.throughWalls, style.filled, style.alpha, style, group.getValue().maxClusters,
                         nearestDistanceSquared(positions, playerPos)));
             }
         }
@@ -252,17 +258,22 @@ public final class BlockOutlineRenderer {
     }
 
     private static int throughWallAlpha(int alpha) {
-        return Math.max(alpha, MIN_THROUGH_WALL_ALPHA);
+        return alpha <= 0 ? DEFAULT_FILLED_ALPHA : alpha;
     }
 
-    private static void drawOutline(MatrixStack matrices, VertexConsumer lines, BlockPos pos, int color, int alpha) {
-        double x1 = pos.getX() - 0.01;
-        double y1 = pos.getY() - 0.01;
-        double z1 = pos.getZ() - 0.01;
-        double x2 = pos.getX() + 1.01;
-        double y2 = pos.getY() + 1.01;
-        double z2 = pos.getZ() + 1.01;
+    private static void drawShapeOutline(MatrixStack matrices, VertexConsumer lines, BlockHighlight highlight, int color, int alpha) {
+        for (Box box : shapeBoxes(highlight)) {
+            drawOutlineBox(matrices, lines, highlight.pos(), box, color, alpha, 0.01);
+        }
+    }
 
+    private static void drawOutlineBox(MatrixStack matrices, VertexConsumer lines, BlockPos pos, Box box, int color, int alpha, double expansion) {
+        double x1 = pos.getX() + box.minX - expansion;
+        double y1 = pos.getY() + box.minY - expansion;
+        double z1 = pos.getZ() + box.minZ - expansion;
+        double x2 = pos.getX() + box.maxX + expansion;
+        double y2 = pos.getY() + box.maxY + expansion;
+        double z2 = pos.getZ() + box.maxZ + expansion;
         drawRect(matrices, lines, x1, y1, z1, x2, y1, z2, color, alpha);
         drawRect(matrices, lines, x1, y2, z1, x2, y2, z2, color, alpha);
         drawLine(matrices, lines, x1, y1, z1, x1, y2, z1, color, alpha);
@@ -280,6 +291,17 @@ public final class BlockOutlineRenderer {
     }
 
     private static void drawMergedClusterSurfaces(MatrixStack matrices, VertexConsumer lines, VertexConsumer filled, Cluster cluster, boolean fill) {
+        if (cluster.shapeAccurate) {
+            for (BlockHighlight highlight : cluster.highlights) {
+                if (fill) {
+                    drawFilledShape(matrices, filled, highlight, cluster.color, cluster.alpha, VISIBLE_FILL_EXPANSION);
+                } else {
+                    drawShapeOutline(matrices, lines, highlight, cluster.color, 242);
+                }
+            }
+            return;
+        }
+
         Map<FacePlane, Set<GridCell>> faces = new HashMap<>();
         for (BlockPos pos : cluster.positions) {
             for (Direction direction : Direction.values()) {
@@ -336,10 +358,68 @@ public final class BlockOutlineRenderer {
         }
     }
 
-    private static void drawFilledBlock(MatrixStack matrices, VertexConsumer filled, BlockPos pos, int color, int alpha, double expansion) {
-        for (Direction direction : Direction.values()) {
-            drawFilledFace(matrices, filled, pos, direction, color, alpha, expansion);
+    private static void drawFilledShape(MatrixStack matrices, VertexConsumer filled, BlockHighlight highlight, int color, int alpha, double expansion) {
+        for (Box box : shapeBoxes(highlight)) {
+            drawFilledBox(matrices, filled, highlight.pos(), box, color, alpha, expansion);
         }
+    }
+
+    private static void drawFilledBox(MatrixStack matrices, VertexConsumer filled, BlockPos pos, Box box, int color, int alpha, double expansion) {
+        double x1 = pos.getX() + box.minX - expansion;
+        double y1 = pos.getY() + box.minY - expansion;
+        double z1 = pos.getZ() + box.minZ - expansion;
+        double x2 = pos.getX() + box.maxX + expansion;
+        double y2 = pos.getY() + box.maxY + expansion;
+        double z2 = pos.getZ() + box.maxZ + expansion;
+
+        drawQuad(filled, matrices, x1, y1, z1, x1, y1, z2, x2, y1, z2, x2, y1, z1, color, alpha);
+        drawQuad(filled, matrices, x1, y2, z1, x2, y2, z1, x2, y2, z2, x1, y2, z2, color, alpha);
+        drawQuad(filled, matrices, x1, y1, z1, x2, y1, z1, x2, y2, z1, x1, y2, z1, color, alpha);
+        drawQuad(filled, matrices, x1, y1, z2, x1, y2, z2, x2, y2, z2, x2, y1, z2, color, alpha);
+        drawQuad(filled, matrices, x1, y1, z1, x1, y2, z1, x1, y2, z2, x1, y1, z2, color, alpha);
+        drawQuad(filled, matrices, x2, y1, z1, x2, y1, z2, x2, y2, z2, x2, y2, z1, color, alpha);
+    }
+
+    private static List<Box> shapeBoxes(BlockHighlight highlight) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) {
+            return List.of(new Box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0));
+        }
+
+        VoxelShape shape = highlight.state().getOutlineShape(client.world, highlight.pos());
+        List<Box> boxes = shape.getBoundingBoxes();
+        if (boxes.isEmpty()) {
+            VoxelShape collisionShape = highlight.state().getCollisionShape(client.world, highlight.pos());
+            boxes = collisionShape.getBoundingBoxes();
+        }
+        if (boxes.isEmpty()) {
+            return List.of(new Box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0));
+        }
+        return boxes;
+    }
+
+    private static boolean hasOnlyFullBlockShapes(List<BlockHighlight> highlights) {
+        for (BlockHighlight highlight : highlights) {
+            if (!isFullBlockShape(highlight)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isFullBlockShape(BlockHighlight highlight) {
+        List<Box> boxes = shapeBoxes(highlight);
+        if (boxes.size() != 1) {
+            return false;
+        }
+
+        Box box = boxes.get(0);
+        return nearly(box.minX, 0.0) && nearly(box.minY, 0.0) && nearly(box.minZ, 0.0)
+                && nearly(box.maxX, 1.0) && nearly(box.maxY, 1.0) && nearly(box.maxZ, 1.0);
+    }
+
+    private static boolean nearly(double actual, double expected) {
+        return Math.abs(actual - expected) < 0.0001;
     }
 
     private static FacePlane facePlane(BlockPos pos, Direction direction) {
@@ -417,24 +497,6 @@ public final class BlockOutlineRenderer {
         }
     }
 
-    private static void drawFilledFace(MatrixStack matrices, VertexConsumer filled, BlockPos pos, Direction direction, int color, int alpha, double expansion) {
-        double x1 = pos.getX() - expansion;
-        double y1 = pos.getY() - expansion;
-        double z1 = pos.getZ() - expansion;
-        double x2 = pos.getX() + 1.0 + expansion;
-        double y2 = pos.getY() + 1.0 + expansion;
-        double z2 = pos.getZ() + 1.0 + expansion;
-
-        switch (direction) {
-            case DOWN -> drawQuad(filled, matrices, x1, y1, z1, x1, y1, z2, x2, y1, z2, x2, y1, z1, color, alpha);
-            case UP -> drawQuad(filled, matrices, x1, y2, z1, x2, y2, z1, x2, y2, z2, x1, y2, z2, color, alpha);
-            case NORTH -> drawQuad(filled, matrices, x1, y1, z1, x2, y1, z1, x2, y2, z1, x1, y2, z1, color, alpha);
-            case SOUTH -> drawQuad(filled, matrices, x1, y1, z2, x1, y2, z2, x2, y2, z2, x2, y1, z2, color, alpha);
-            case WEST -> drawQuad(filled, matrices, x1, y1, z1, x1, y2, z1, x1, y2, z2, x1, y1, z2, color, alpha);
-            case EAST -> drawQuad(filled, matrices, x2, y1, z1, x2, y1, z2, x2, y2, z2, x2, y2, z1, color, alpha);
-        }
-    }
-
     private static void drawRect(MatrixStack matrices, VertexConsumer lines,
                                  double ax, double ay, double az,
                                  double bx, double by, double bz,
@@ -504,6 +566,7 @@ public final class BlockOutlineRenderer {
 
     private static final class ClusterGroup {
         private final Set<BlockPos> positions = new HashSet<>();
+        private final Map<BlockPos, BlockHighlight> highlights = new HashMap<>();
         private int maxClusters = Integer.MAX_VALUE;
     }
 
@@ -513,10 +576,11 @@ public final class BlockOutlineRenderer {
     private record GridCell(int a, int b) {
     }
 
-    private record Cluster(Set<BlockPos> positions, int color, boolean throughWalls, boolean filled, int alpha,
+    private record Cluster(Set<BlockPos> positions, List<BlockHighlight> highlights, boolean shapeAccurate,
+                           int color, boolean throughWalls, boolean filled, int alpha,
                            ClusterStyle style, int maxClusters, double nearestDistanceSquared) {
         private Cluster withAlpha(int nextAlpha) {
-            return new Cluster(positions, color, throughWalls, filled, nextAlpha, style, maxClusters, nearestDistanceSquared);
+            return new Cluster(positions, highlights, shapeAccurate, color, throughWalls, filled, nextAlpha, style, maxClusters, nearestDistanceSquared);
         }
     }
 }

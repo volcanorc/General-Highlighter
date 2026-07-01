@@ -217,7 +217,7 @@ public final class BlockScanner {
                         continue;
                     }
 
-                    found.add(new BlockHighlight(mutable.toImmutable(), rule, HighlightConfig.parseColor(rule.color)));
+                    found.add(new BlockHighlight(mutable.toImmutable(), state, rule, HighlightConfig.parseColor(rule.color)));
                 }
             }
         }

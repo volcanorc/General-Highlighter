@@ -514,7 +514,7 @@ public final class HighlighterScreen extends Screen {
             String mode = rule == null ? BlockRenderMode.OVERLAY.displayName() : rule.mode.displayName();
             int maxHighlights = rule == null ? 2048 : rule.maxHighlights;
             int maxClusters = rule == null ? 512 : rule.maxClusters;
-            int fillAlpha = rule == null ? 160 : rule.fillAlpha;
+            int fillAlpha = rule == null ? 128 : rule.fillAlpha;
             toggleButton.setMessage(Text.literal(enabled ? "Enabled" : "Disabled"));
             colorField.setText(color);
             rangeField.setText(Integer.toString(range));

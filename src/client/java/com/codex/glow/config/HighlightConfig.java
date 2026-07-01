@@ -133,7 +133,7 @@ public final class HighlightConfig {
                 && rule.throughWalls
                 && rule.maxHighlights == 2048
                 && rule.maxClusters == 512
-                && (rule.fillAlpha == 72 || rule.fillAlpha == 160)) {
+                && (rule.fillAlpha == 72 || rule.fillAlpha == 128 || rule.fillAlpha == 160)) {
             blocks.remove(id);
             blockRuleCacheDirty = true;
             dirty = true;

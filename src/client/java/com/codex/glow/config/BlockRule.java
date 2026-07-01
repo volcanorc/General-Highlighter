@@ -8,7 +8,7 @@ public final class BlockRule {
     public boolean throughWalls = true;
     public int maxHighlights = 2048;
     public int maxClusters = 512;
-    public int fillAlpha = 160;
+    public int fillAlpha = 128;
 
     public void sanitize() {
         color = HighlightConfig.sanitizeColor(color, HighlightConfig.DEFAULT_BLOCK_COLOR);
